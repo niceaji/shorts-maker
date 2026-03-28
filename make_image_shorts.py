@@ -23,119 +23,29 @@ make_image_shorts.py - 이미지 디렉토리로 세로형 숏폼 영상 생성
 
 import argparse
 import random
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageColor, ImageDraw, ImageFont
+from PIL import Image
 
-
-# 출력 영상 규격
-OUT_W = 1080
-OUT_H = 1920
-FPS = 30
-
-
-def find_images(src_dir, exts):
-    """소스 디렉토리에서 이미지 파일 목록을 찾아 정렬하여 반환한다."""
-    src_path = Path(src_dir)
-    ext_set = {e.lower() for e in exts}
-    images = []
-    for p in src_path.iterdir():
-        if p.is_file() and p.suffix.lower().lstrip(".") in ext_set:
-            images.append(p)
-    return sorted(images)
-
-
-def create_title_overlay(title, font_path, width=OUT_W, height=OUT_H, color="white",
-                         fill=False, zoom=1.1, tmp_dir=None):
-    """Pillow로 제목 텍스트 PNG를 생성한다.
-
-    fill=True: 전체 채우기 모드 → 상단 120px 고정
-    fill=False: 블러 배경 모드 → 상단 여백과 전경 이미지 사이 세로 중앙
-    """
-    try:
-        font = ImageFont.truetype(font_path, 80)
-    except Exception:
-        print(f"  경고: 폰트 파일을 열 수 없어 제목을 생략합니다: {font_path}")
-        return None
-
-    # 텍스트 크기 측정
-    dummy = Image.new("RGBA", (1, 1))
-    draw = ImageDraw.Draw(dummy)
-    bbox = draw.textbbox((0, 0), title, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    x = (width - tw) // 2
-    if fill:
-        y = 120
-    else:
-        # 블러 배경 모드: 상단 여백과 전경 이미지 사이 세로 중앙
-        fg_h = zoom * width * 9 / 16
-        gap_top = (height - fg_h) / 2
-        y = int((gap_top - th) / 2)
-
-    try:
-        rgb = ImageColor.getrgb(color)
-        rgba = rgb + (255,) if len(rgb) == 3 else rgb
-    except ValueError:
-        rgba = (255, 255, 255, 255)
-
-    draw.text((x, y), title, font=font, fill=rgba)
-
-    out_path = Path(tmp_dir) / "title_overlay.png"
-    img.save(str(out_path))
-    return str(out_path)
-
-
-def create_subtitle_overlay(text, font_path, width=OUT_W, height=OUT_H,
-                            zoom=1.1, fill=False, color="black", tmp_dir=None, index=0):
-    """Pillow로 자막 PNG를 생성한다. make_shorts.py와 동일한 스타일.
-
-    fill=True: 영상 하단 바로 아래 (20px 마진)
-    fill=False: 전경 영상 하단 바로 아래 (20px 마진)
-    """
-    try:
-        font = ImageFont.truetype(font_path, 56)
-    except Exception:
-        print(f"  경고: 폰트 파일을 열 수 없어 자막을 생략합니다: {font_path}")
-        return None
-
-    try:
-        rgb = ImageColor.getrgb(color)
-        text_rgba = rgb + (255,) if len(rgb) == 3 else rgb
-    except ValueError:
-        text_rgba = (0, 0, 0, 255)
-
-    # 텍스트 크기 측정
-    dummy = Image.new("RGBA", (1, 1))
-    draw = ImageDraw.Draw(dummy)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-
-    if fill:
-        y = height - 140
-    else:
-        # 전경 영상 하단 바로 아래
-        fg_h = zoom * width * 9 / 16
-        gap_bottom = (height - fg_h) / 2
-        fg_bottom = height - gap_bottom
-        y = int(fg_bottom + 20)
-
-    x = (width - tw) // 2
-
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.text((x, y), text, font=font, fill=text_rgba)
-
-    out_path = Path(tmp_dir) / f"subtitle_{index:04d}.png"
-    img.save(str(out_path))
-    return str(out_path)
+from shortmaker import OUT_W, OUT_H, FPS
+from shortmaker.cli import (
+    add_bgm_args,
+    add_display_args,
+    add_subtitle_args,
+    add_title_args,
+    resolve_font_path,
+)
+from shortmaker.ffmpeg import (
+    ENCODER_AUDIO,
+    ENCODER_VIDEO,
+    build_bgm_filter,
+    concat_segments,
+)
+from shortmaker.files import find_media_files
+from shortmaker.overlay import create_subtitle_overlay, create_title_overlay
 
 
 EFFECTS = [
@@ -339,26 +249,17 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
             "-filter_complex", filter_complex,
             "-map", "[vout]", "-map", "2:a",
             "-t", str(duration),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-            "-r", str(FPS), "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-            "-shortest", str(out_path),
-        ]
+        ] + ENCODER_VIDEO + ENCODER_AUDIO + ["-shortest", str(out_path)]
     else:
         filter_complex = f"{main_filter}[vout]"
-        audio_idx = 1
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1", "-i", str(img_path),
             "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
             "-filter_complex", filter_complex,
-            "-map", "[vout]", "-map", f"{audio_idx}:a",
+            "-map", "[vout]", "-map", "1:a",
             "-t", str(duration),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-            "-r", str(FPS), "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-            "-shortest", str(out_path),
-        ]
+        ] + ENCODER_VIDEO + ENCODER_AUDIO + ["-shortest", str(out_path)]
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     return result.returncode == 0, result.stderr
@@ -383,73 +284,17 @@ def concat_with_transition(segment_files, output_path, tmp_dir, transition,
         _concat_xfade(segment_files, output_path, tmp_dir, transition,
                       title_png, bgm, bgm_volume, bgm_fade, total_duration)
     else:
-        _concat_demuxer(segment_files, output_path, tmp_dir,
-                        title_png, bgm, bgm_volume, bgm_fade, total_duration)
-
-
-def _concat_demuxer(segment_files, output_path, tmp_dir,
-                    title_png, bgm, bgm_volume, bgm_fade, total_duration):
-    """concat demuxer로 세그먼트를 이어 붙인다."""
-    list_file = Path(tmp_dir) / "segments.txt"
-    with open(list_file, "w") as f:
-        for seg in segment_files:
-            f.write(f"file '{seg}'\n")
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", str(list_file),
-    ]
-
-    input_idx = 1
-    vf_parts = []
-    af_parts = []
-
-    if title_png:
-        cmd += ["-loop", "1", "-i", title_png]
-        vf_parts.append(
-            f"[{input_idx}:v]format=rgba,fade=t=in:st=0:d=1:alpha=1[title];"
-            f"[0:v][title]overlay=0:0:shortest=1[vout]"
+        ok, stderr = concat_segments(
+            segment_files, output_path, tmp_dir,
+            title_png=title_png,
+            bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
+            total_duration=total_duration,
         )
-        input_idx += 1
-
-    if bgm:
-        cmd += ["-i", str(bgm)]
-        bgm_idx = input_idx
-        input_idx += 1
-        fade_out_start = max(0, (total_duration or 30) - bgm_fade)
-        af_parts.append(
-            f"[{bgm_idx}:a]volume={bgm_volume},"
-            f"afade=t=in:st=0:d={bgm_fade},"
-            f"afade=t=out:st={fade_out_start}:d={bgm_fade}[bgm];"
-            f"[0:a][bgm]amix=inputs=2:duration=shortest:dropout_transition=0[aout]"
-        )
-
-    fc_parts = vf_parts + af_parts
-    if fc_parts:
-        cmd += ["-filter_complex", ";".join(fc_parts)]
-
-    if vf_parts and af_parts:
-        cmd += ["-map", "[vout]", "-map", "[aout]"]
-    elif vf_parts:
-        cmd += ["-map", "[vout]", "-map", "0:a"]
-    elif af_parts:
-        cmd += ["-map", "0:v", "-map", "[aout]"]
-
-    cmd += [
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-        "-r", str(FPS), "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-        "-movflags", "+faststart",
-        str(output_path),
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if result.returncode != 0:
-        print("  합치기 실패 (demuxer):")
-        for line in result.stderr.strip().splitlines()[-5:]:
-            print(f"    {line}")
-        sys.exit(1)
+        if not ok:
+            print("  합치기 실패 (demuxer):")
+            for line in stderr.strip().splitlines()[-5:]:
+                print(f"    {line}")
+            sys.exit(1)
 
 
 def _concat_xfade(segment_files, output_path, tmp_dir, transition,
@@ -542,30 +387,31 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
             f"[{bgm_idx}:a]volume={bgm_volume},"
             f"afade=t=in:st=0:d={bgm_fade},"
             f"afade=t=out:st={fade_out_start}:d={bgm_fade}[bgm];"
-            f"{ax_label}[bgm]amix=inputs=2:duration=shortest:dropout_transition=0[afinal]"
+            f"{ax_label}[bgm]amix=inputs=2:duration=shortest:dropout_transition=0[aout]"
         )
-        afinal_label = "[afinal]"
+        afinal_label = "[aout]"
     else:
         afinal_label = ax_label
 
     cmd += ["-filter_complex", ";".join(fc_parts)]
     cmd += ["-map", vfinal_label, "-map", afinal_label]
-    cmd += [
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-        "-r", str(FPS), "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-        "-movflags", "+faststart",
-        str(output_path),
-    ]
+    cmd += ENCODER_VIDEO + ENCODER_AUDIO + ["-movflags", "+faststart", str(output_path)]
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         print("  합치기 실패 (xfade). concat demuxer로 재시도합니다...")
         # xfade 실패 시 demuxer로 폴백
-        _concat_demuxer(
+        ok, stderr = concat_segments(
             segment_files, output_path, tmp_dir,
-            title_png, bgm, bgm_volume, bgm_fade, total_duration
+            title_png=title_png,
+            bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
+            total_duration=total_duration,
         )
+        if not ok:
+            print("  합치기 실패 (demuxer):")
+            for line in stderr.strip().splitlines()[-5:]:
+                print(f"    {line}")
+            sys.exit(1)
 
 
 def main():
@@ -609,60 +455,6 @@ def main():
         help="켄번즈 최대 줌 배율 (기본: 1.15)",
     )
     parser.add_argument(
-        "--zoom",
-        type=float,
-        default=1.1,
-        help="전경 이미지 확대 배율; 1.0=가로 딱맞춤, 1.1=살짝 확대 (기본: 1.1, --fill 시 무시)",
-    )
-    parser.add_argument(
-        "--fill",
-        action="store_true",
-        default=False,
-        help="이미지를 전체 화면에 꽉 채우기 (기본: 블러 배경 + 전경 중앙)",
-    )
-    parser.add_argument(
-        "--title",
-        default=None,
-        help="상단 제목 텍스트 (Pretendard Bold 80px, 페이드인)",
-    )
-    parser.add_argument(
-        "--font",
-        default=None,
-        help="폰트 파일 경로 (기본: ./fonts/Pretendard-Bold.otf)",
-    )
-    parser.add_argument(
-        "--font-color",
-        default="white",
-        help="제목 색상: 이름(white) 또는 hex(#FF5500) (기본: white)",
-    )
-    parser.add_argument(
-        "--subtitle",
-        default=None,
-        help="이미지별 자막, 파이프로 구분 (예: \"아침|입수|수영중\")",
-    )
-    parser.add_argument(
-        "--subtitle-color",
-        default="white",
-        help="자막 텍스트 색상 (기본: white)",
-    )
-    parser.add_argument(
-        "--bgm",
-        default=None,
-        help="배경음악 파일 경로 (mp3, wav 등)",
-    )
-    parser.add_argument(
-        "--bgm-volume",
-        type=float,
-        default=0.3,
-        help="배경음악 볼륨 (0.0~1.0, 기본: 0.3)",
-    )
-    parser.add_argument(
-        "--bgm-fade",
-        type=float,
-        default=1.5,
-        help="배경음악 페이드인/아웃 길이 (초, 기본: 1.5)",
-    )
-    parser.add_argument(
         "--shuffle",
         action="store_true",
         default=False,
@@ -674,11 +466,15 @@ def main():
         default=0.5,
         help="이미지 간 전환 효과 길이 (초, 0이면 전환 없음, 기본: 0.5)",
     )
+    add_title_args(parser)
+    add_subtitle_args(parser)
+    add_bgm_args(parser)
+    add_display_args(parser)
 
     args = parser.parse_args()
 
     output_path = Path(args.out)
-    font_path = args.font or str(Path(__file__).parent / "fonts" / "Pretendard-Bold.otf")
+    font_path = resolve_font_path(args)
 
     print("=== 이미지 숏폼 영상 생성기 ===")
     print(f"소스 디렉토리: {args.src}")
@@ -698,7 +494,7 @@ def main():
     print()
 
     # 이미지 검색
-    images = find_images(args.src, args.ext)
+    images = find_media_files(Path(args.src), args.ext, recursive=False)
     if not images:
         ext_list = ", ".join(f"*.{e}" for e in args.ext)
         print(f"오류: {args.src} 에서 이미지 파일을 찾을 수 없습니다. ({ext_list})")

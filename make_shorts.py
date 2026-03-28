@@ -21,64 +21,25 @@ make_shorts.py - DJI 영상 클립으로 세로형 숏폼 영상 생성
 """
 
 import argparse
-import json
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
-
-
-def get_video_info(filepath):
-    """ffprobe로 영상 길이(초)와 오디오 유무를 반환한다."""
-    cmd = [
-        "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
-        "-show_streams",
-        "-show_format",
-        str(filepath),
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            return None, False
-        data = json.loads(result.stdout)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
-        return None, False
-
-    duration = None
-    try:
-        duration = float(data["format"]["duration"])
-    except (KeyError, ValueError):
-        for stream in data.get("streams", []):
-            if "duration" in stream:
-                try:
-                    duration = float(stream["duration"])
-                    break
-                except ValueError:
-                    pass
-
-    has_audio = any(
-        s.get("codec_type") == "audio" for s in data.get("streams", [])
-    )
-
-    return duration, has_audio
-
-
-def find_clips(src_dir, date_str, exts):
-    """날짜 문자열로 필터링하여 영상 파일 목록을 반환한다. date_str이 None이면 전체."""
-    src_path = Path(src_dir)
-    ext_set = {e.lower() for e in exts}
-    clips = []
-    for p in src_path.rglob("*"):
-        if p.suffix.lower().lstrip(".") in ext_set:
-            if date_str is None or date_str in p.name:
-                clips.append(p)
-    return sorted(clips)
+from shortmaker.probe import get_video_info
+from shortmaker.files import find_media_files
+from shortmaker.ffmpeg import ENCODER_ARGS, build_enhance_chain, concat_segments
+from shortmaker.overlay import create_title_overlay, create_subtitle_overlay
+from shortmaker.cli import (
+    add_title_args,
+    add_subtitle_args,
+    add_bgm_args,
+    add_display_args,
+    resolve_font_path,
+)
 
 
 def build_filter(zoom, enhance, fill=False):
@@ -89,9 +50,7 @@ def build_filter(zoom, enhance, fill=False):
 
     zoom: 전경 영상 크기 배율 (fill=False일 때만 사용)
     """
-    enhance_chain = ""
-    if enhance:
-        enhance_chain = ",eq=contrast=1.15:brightness=0.03:saturation=1.25,unsharp=5:5:0.8:5:5:0.0"
+    enhance_chain = build_enhance_chain(enhance)
 
     if fill:
         # 전체 채우기: 9:16 크롭 → 1080x1920 스케일
@@ -154,176 +113,12 @@ def extract_segment(clip_path, start, duration, out_path, vf, has_audio, subtitl
         "-t", str(duration),
         "-filter_complex", vf,
         "-map", map_v, "-map", audio_input,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-        "-r", "30", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+    ] + ENCODER_ARGS + [
         "-shortest",
         str(out_path),
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    return result.returncode == 0, result.stderr
-
-
-def create_title_overlay(title, font_path, width=1080, height=1920, zoom=1.1, color="white", tmp_dir=None):
-    """Pillow로 제목 텍스트 PNG를 생성한다.
-
-    가로 중앙 정렬, 프레임 상단과 영상 상단 사이 세로 중앙에 배치.
-    """
-    try:
-        font = ImageFont.truetype(font_path, 80)
-    except Exception:
-        return None
-
-    # 전경 영상 위쪽 여백 계산
-    fg_h = zoom * width * 9 / 16
-    gap_top = (height - fg_h) / 2
-
-    # 텍스트 크기 측정
-    dummy = Image.new("RGBA", (1, 1))
-    draw = ImageDraw.Draw(dummy)
-    bbox = draw.textbbox((0, 0), title, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    x = (width - tw) // 2
-    y = int((gap_top - th) / 2)
-
-    from PIL import ImageColor
-    try:
-        rgba = ImageColor.getrgb(color) + (255,) if len(ImageColor.getrgb(color)) == 3 else ImageColor.getrgb(color)
-    except ValueError:
-        rgba = (255, 255, 255, 255)
-    draw.text((x, y), title, font=font, fill=rgba)
-
-    out_path = Path(tmp_dir) / "title_overlay.png"
-    img.save(str(out_path))
-    return str(out_path)
-
-
-def create_subtitle_overlay(text, font_path, width=1080, height=1920, zoom=1.1, color="black", tmp_dir=None, index=0):
-    """Pillow로 자막 텍스트 PNG를 생성한다. 영상 하단 바로 아래에 배치."""
-    try:
-        font = ImageFont.truetype(font_path, 56)
-    except Exception:
-        return None
-
-    from PIL import ImageColor
-    try:
-        rgba = ImageColor.getrgb(color)
-        if len(rgba) == 3:
-            rgba = rgba + (255,)
-    except ValueError:
-        rgba = (0, 0, 0, 255)
-
-    # 텍스트 크기 측정
-    dummy = Image.new("RGBA", (1, 1))
-    draw = ImageDraw.Draw(dummy)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-
-    # 전경 영상 아래쪽 바로 밑에 배치 (20px 마진)
-    fg_h = zoom * width * 9 / 16
-    gap_bottom = (height - fg_h) / 2
-    fg_bottom = height - gap_bottom
-    y = int(fg_bottom + 20)
-    x = (width - tw) // 2
-
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.text((x, y), text, font=font, fill=rgba)
-
-    out_path = Path(tmp_dir) / f"subtitle_{index:04d}.png"
-    img.save(str(out_path))
-    return str(out_path)
-
-
-def concat_segments(segment_files, output_path, tmp_dir, title=None, font_path=None,
-                    zoom=1.1, color="white", bgm=None, bgm_volume=0.3, bgm_fade=1.5,
-                    total_duration=None):
-    """세그먼트 파일들을 하나로 합친다.
-
-    제목이 있으면 페이드인 오버레이 적용.
-    BGM이 있으면 원본 오디오와 믹싱 (볼륨 조절, 페이드인/아웃).
-    """
-    list_file = Path(tmp_dir) / "segments.txt"
-    with open(list_file, "w") as f:
-        for seg in segment_files:
-            f.write(f"file '{seg}'\n")
-
-    title_png = None
-    if title and font_path:
-        title_png = create_title_overlay(title, font_path, zoom=zoom, color=color, tmp_dir=tmp_dir)
-
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(list_file),
-    ]
-
-    input_idx = 1  # 다음 입력 인덱스 추적
-
-    # 제목 오버레이
-    vf_parts = []
-    if title_png:
-        cmd += ["-loop", "1", "-i", title_png]
-        vf_parts.append(
-            f"[{input_idx}:v]format=rgba,fade=t=in:st=0:d=1:alpha=1[title];"
-            f"[0:v][title]overlay=0:0:shortest=1[vout]"
-        )
-        input_idx += 1
-
-    # BGM
-    af_parts = []
-    if bgm:
-        cmd += ["-i", str(bgm)]
-        bgm_idx = input_idx
-        input_idx += 1
-        # BGM: 볼륨 조절 + 페이드인 + 페이드아웃 (영상 끝 기준)
-        fade_out_start = max(0, (total_duration or 30) - bgm_fade)
-        af_parts.append(
-            f"[{bgm_idx}:a]volume={bgm_volume},"
-            f"afade=t=in:st=0:d={bgm_fade},"
-            f"afade=t=out:st={fade_out_start}:d={bgm_fade}[bgm];"
-            f"[0:a][bgm]amix=inputs=2:duration=shortest:dropout_transition=0[aout]"
-        )
-
-    # filter_complex 조합
-    fc = []
-    if vf_parts:
-        fc.extend(vf_parts)
-    if af_parts:
-        fc.extend(af_parts)
-
-    if fc:
-        cmd += ["-filter_complex", ";".join(fc)]
-
-    # 매핑
-    if vf_parts and af_parts:
-        cmd += ["-map", "[vout]", "-map", "[aout]"]
-    elif vf_parts:
-        cmd += ["-map", "[vout]", "-map", "0:a"]
-    elif af_parts:
-        cmd += ["-map", "0:v", "-map", "[aout]"]
-
-    cmd += [
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "18",
-        "-r", "30",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-ar", "44100",
-        "-movflags", "+faststart",
-        str(output_path),
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     return result.returncode == 0, result.stderr
 
 
@@ -362,79 +157,15 @@ def main():
         help="각 클립에서 잘라낼 길이 (초, 기본: 2.5)",
     )
     parser.add_argument(
-        "--zoom",
-        type=float,
-        default=1.1,
-        help="전경 영상 확대 배율; 1.0=가로 딱맞춤, 1.1=살짝 확대 (기본: 1.1)",
-    )
-    enhance_group = parser.add_mutually_exclusive_group()
-    enhance_group.add_argument(
-        "--enhance",
-        dest="enhance",
-        action="store_true",
-        default=True,
-        help="아이폰 스타일 색보정 적용 (기본: 켜짐)",
-    )
-    enhance_group.add_argument(
-        "--no-enhance",
-        dest="enhance",
-        action="store_false",
-        help="색보정 끄기",
-    )
-    parser.add_argument(
-        "--fill",
-        action="store_true",
-        default=False,
-        help="영상을 전체 화면에 꽉 채우기 (기본: 블러 배경 + 전경 중앙)",
-    )
-    parser.add_argument(
         "--shuffle",
         action="store_true",
         default=False,
         help="클립 순서 랜덤 (기본: 꺼짐)",
     )
-    parser.add_argument(
-        "--title",
-        default=None,
-        help="상단 제목 텍스트 (Pretendard Bold, 페이드인)",
-    )
-    parser.add_argument(
-        "--font",
-        default=None,
-        help="폰트 파일 경로 (기본: ./fonts/Pretendard-Bold.otf)",
-    )
-    parser.add_argument(
-        "--font-color",
-        default="white",
-        help="제목 색상: 이름(white) 또는 hex(#FF5500) (기본: white)",
-    )
-    parser.add_argument(
-        "--subtitle",
-        default=None,
-        help="클립별 자막, 파이프로 구분 (예: \"준비|입수!|달린다\")",
-    )
-    parser.add_argument(
-        "--subtitle-color",
-        default="black",
-        help="자막 색상 (기본: black)",
-    )
-    parser.add_argument(
-        "--bgm",
-        default=None,
-        help="배경음악 파일 경로 (mp3, wav 등)",
-    )
-    parser.add_argument(
-        "--bgm-volume",
-        type=float,
-        default=0.3,
-        help="배경음악 볼륨 (0.0~1.0, 기본: 0.3)",
-    )
-    parser.add_argument(
-        "--bgm-fade",
-        type=float,
-        default=1.5,
-        help="배경음악 페이드인/아웃 길이 (초, 기본: 1.5)",
-    )
+    add_display_args(parser)
+    add_title_args(parser)
+    add_subtitle_args(parser)
+    add_bgm_args(parser)
 
     args = parser.parse_args()
 
@@ -455,7 +186,7 @@ def main():
     print()
 
     # 클립 검색
-    clips = find_clips(args.src, date_str, args.ext)
+    clips = find_media_files(Path(args.src), args.ext, date_str=date_str)
     if not clips:
         ext_patterns = ", ".join(f"*.{ext}" for ext in args.ext)
         if date_str:
@@ -485,11 +216,14 @@ def main():
         for i, clip in enumerate(clips):
             print(f"[{i + 1}/{len(clips)}] 처리중: {clip.name}")
 
-            duration, has_audio = get_video_info(clip)
-            if duration is None:
+            info = get_video_info(clip)
+            if info is None:
                 print(f"  건너뜀: 영상 길이를 읽을 수 없음")
                 skipped += 1
                 continue
+
+            duration = info["duration"]
+            has_audio = info["has_audio"]
 
             seg_duration = min(args.duration, duration)
             max_start = duration - seg_duration
@@ -501,10 +235,11 @@ def main():
             # 해당 클립에 자막이 있으면 자막 오버레이 생성
             sub_png = None
             if subtitles and processed < len(subtitles) and subtitles[processed]:
-                font_path = args.font or str(Path(__file__).parent / "fonts" / "Pretendard-Bold.otf")
+                font_path = resolve_font_path(args)
                 sub_png = create_subtitle_overlay(
                     subtitles[processed], font_path,
-                    zoom=args.zoom, color=args.subtitle_color,
+                    zoom=args.zoom, fill=args.fill,
+                    color=args.subtitle_color,
                     tmp_dir=tmp_dir, index=processed,
                 )
 
@@ -532,18 +267,26 @@ def main():
 
         if len(segment_files) == 1:
             print("세그먼트 1개 — 바로 출력 파일로 복사합니다...")
-            import shutil
             shutil.copy2(segment_files[0], output_path)
         else:
             sum_duration = sum(segment_durations)
             print(f"{len(segment_files)}개 세그먼트 합치기 -> {output_path}")
-            font_path = args.font or str(Path(__file__).parent / "fonts" / "Pretendard-Bold.otf")
-            ok, err = concat_segments(segment_files, output_path, tmp_dir,
-                                      title=args.title, font_path=font_path,
-                                      zoom=args.zoom, color=args.font_color,
-                                      bgm=args.bgm, bgm_volume=args.bgm_volume,
-                                      bgm_fade=args.bgm_fade,
-                                      total_duration=sum_duration)
+            font_path = resolve_font_path(args)
+            title_png = None
+            if args.title:
+                title_png = create_title_overlay(
+                    args.title, font_path,
+                    zoom=args.zoom, fill=args.fill,
+                    color=args.font_color,
+                    tmp_dir=tmp_dir,
+                )
+            ok, err = concat_segments(
+                segment_files, output_path, tmp_dir,
+                title_png=title_png,
+                bgm=args.bgm, bgm_volume=args.bgm_volume,
+                bgm_fade=args.bgm_fade,
+                total_duration=sum_duration,
+            )
             if not ok:
                 print("합치기 실패:")
                 err_lines = [l for l in err.strip().splitlines() if l.strip()]

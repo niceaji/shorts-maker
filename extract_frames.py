@@ -13,43 +13,19 @@ extract_frames.py - DJI 영상 클립에서 랜덤 프레임 추출
 """
 
 import argparse
-import json
 import random
 import subprocess
 import sys
 from datetime import date
 from pathlib import Path
 
-
-
-def get_video_duration(filepath: Path) -> float | None:
-    """ffprobe로 영상 길이(초)를 반환한다. 실패 시 None."""
-    cmd = [
-        "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
-        "-show_format",
-        str(filepath),
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        info = json.loads(result.stdout)
-        duration = float(info["format"]["duration"])
-        return duration if duration > 0 else None
-    except (subprocess.CalledProcessError, KeyError, ValueError, json.JSONDecodeError) as exc:
-        print(f"  경고: {filepath.name} 길이 읽기 실패: {exc}", file=sys.stderr)
-        return None
+from shortmaker.ffmpeg import ENHANCE_FILTER
+from shortmaker.files import find_media_files
+from shortmaker.probe import get_video_info
 
 
 def extract_frame(filepath: Path, timestamp: float, out_path: Path, enhance: bool = False) -> bool:
     """지정된 타임스탬프에서 프레임 한 장을 추출하여 JPG로 저장한다."""
-    vf_filters = []
-    if enhance:
-        # 아이폰 스타일 자동 보정: 대비, 채도, 선명도, 밝기
-        vf_filters = [
-            "eq=contrast=1.15:brightness=0.03:saturation=1.25",
-            "unsharp=5:5:0.8:5:5:0.0",
-        ]
     cmd = [
         "ffmpeg",
         "-y",
@@ -58,8 +34,9 @@ def extract_frame(filepath: Path, timestamp: float, out_path: Path, enhance: boo
         "-frames:v", "1",
         "-q:v", "2",
     ]
-    if vf_filters:
-        cmd += ["-vf", ",".join(vf_filters)]
+    if enhance:
+        # 아이폰 스타일 자동 보정: 대비, 채도, 선명도, 밝기
+        cmd += ["-vf", ENHANCE_FILTER]
     cmd.append(str(out_path))
     try:
         subprocess.run(cmd, capture_output=True, check=True)
@@ -139,17 +116,6 @@ def level_horizon(path: Path) -> float | None:
     return correction
 
 
-def find_video_files(src: Path, date_str: str | None, exts: list[str]) -> list[Path]:
-    """날짜 문자열로 필터링하여 영상 파일 목록을 반환한다. date_str이 None이면 전체."""
-    ext_set = {e.lower().lstrip(".") for e in exts}
-    clips = []
-    for p in src.rglob("*"):
-        if p.suffix.lower().lstrip(".") in ext_set:
-            if date_str is None or date_str in p.name:
-                clips.append(p)
-    return sorted(clips)
-
-
 def main() -> None:
     today = date.today().strftime("%Y%m%d")
 
@@ -211,7 +177,7 @@ def main() -> None:
     ext_label = ",".join(args.ext)
     label = f"*{date_str}*.{{{ext_label}}}" if date_str else f"*.{{{ext_label}}}"
     print(f"{src}에서 {label} 검색중 ...")
-    video_files = find_video_files(src, date_str, args.ext)
+    video_files = find_media_files(src, args.ext, date_str=date_str)
 
     total = len(video_files)
     print(f"{total}개 파일 발견.\n")
@@ -226,12 +192,13 @@ def main() -> None:
     for i, filepath in enumerate(video_files, start=1):
         print(f"[{i}/{total}] {filepath.name}")
 
-        duration = get_video_duration(filepath)
-        if duration is None:
+        info = get_video_info(filepath)
+        if info is None:
             print(f"  건너뜀: 유효하지 않은 영상")
             skipped += 1
             continue
 
+        duration = info["duration"]
         timestamp = random.uniform(0, duration)
         print(f"  길이: {duration:.2f}초  |  선택 지점: {timestamp:.3f}초")
 
