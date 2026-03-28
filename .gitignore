@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+
+# 출력 영상/이미지
+*.mp4
+*.jpg
+*.png
+img/
+
+# 테스트/임시 파일
+test/
+bg/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# OMC
+.omc/

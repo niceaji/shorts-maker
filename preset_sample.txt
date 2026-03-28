@@ -1,0 +1,13 @@
+--title
+제주 오픈워터 수영
+--subtitle
+준비중|입수!|달린다|파이팅
+--zoom
+1.1
+--duration
+2.5
+--font-color
+white
+--subtitle-color
+black
+--enhance
