@@ -81,18 +81,26 @@ def find_clips(src_dir, date_str, exts):
     return sorted(clips)
 
 
-def build_filter(zoom, enhance):
+def build_filter(zoom, enhance, fill=False):
     """ffmpeg filter_complex 문자열을 생성한다.
 
-    블러 배경(9:16 크롭 + 가우시안 블러) 위에 원본 영상을 중앙 배치한다.
+    fill=False: 블러 배경(9:16 크롭 + 가우시안 블러) 위에 원본 영상을 중앙 배치
+    fill=True: 전체 화면 꽉 채우기 (9:16 크롭만)
 
-    zoom: 전경 영상 크기 배율
-      1.0 = 프레임 가로폭에 딱 맞춤
-      1.1 = 10% 확대 (양쪽 살짝 잘림, 세로 공간 더 채움)
+    zoom: 전경 영상 크기 배율 (fill=False일 때만 사용)
     """
     enhance_chain = ""
     if enhance:
         enhance_chain = ",eq=contrast=1.15:brightness=0.03:saturation=1.25,unsharp=5:5:0.8:5:5:0.0"
+
+    if fill:
+        # 전체 채우기: 9:16 크롭 → 1080x1920 스케일
+        filt = (
+            f"[0:v]crop=ih*9/16:ih:(iw-ih*9/16)/2:0,"
+            f"scale=1080:1920"
+            f"{enhance_chain}[v]"
+        )
+        return filt
 
     # 배경: 중앙 9:16 크롭 → 1080x1920 스케일 → 강한 블러
     bg = (
@@ -374,6 +382,12 @@ def main():
         help="색보정 끄기",
     )
     parser.add_argument(
+        "--fill",
+        action="store_true",
+        default=False,
+        help="영상을 전체 화면에 꽉 채우기 (기본: 블러 배경 + 전경 중앙)",
+    )
+    parser.add_argument(
         "--shuffle",
         action="store_true",
         default=False,
@@ -459,7 +473,7 @@ def main():
     if args.shuffle:
         random.shuffle(clips)
 
-    vf = build_filter(args.zoom, args.enhance)
+    vf = build_filter(args.zoom, args.enhance, fill=args.fill)
     subtitles = args.subtitle.split("|") if args.subtitle else []
 
     with tempfile.TemporaryDirectory(prefix="make_shorts_") as tmp_dir:
