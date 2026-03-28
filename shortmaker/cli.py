@@ -45,6 +45,39 @@ def add_display_args(parser):
                                help="색보정 끄기")
 
 
+def add_speed_args(parser):
+    """속도 관련 인자: --speed"""
+    parser.add_argument("--speed", type=float, default=1.0,
+                        help="재생 속도 배율 (0.5=슬로모션, 2.0=2배속, 기본: 1.0)")
+
+
+def add_audio_args(parser):
+    """오디오 관련 인자: --mute"""
+    parser.add_argument("--mute", action="store_true", default=False,
+                        help="원본 오디오 제거 (BGM만 사용, 기본: 꺼짐)")
+
+
+def add_intro_outro_args(parser):
+    """인트로/아웃트로 관련 인자"""
+    parser.add_argument("--intro", default=None,
+                        help="인트로 영상/이미지 파일 경로 (영상 앞에 추가)")
+    parser.add_argument("--outro", default=None,
+                        help="아웃트로 영상/이미지 파일 경로 (영상 뒤에 추가)")
+
+
+def add_watermark_args(parser):
+    """워터마크 관련 인자"""
+    parser.add_argument("--watermark", default=None,
+                        help="워터마크 텍스트 (예: 날짜, 위치 등)")
+    parser.add_argument("--watermark-position", default="bottom_right",
+                        choices=["top_left", "top_right", "bottom_left", "bottom_right"],
+                        help="워터마크 위치 (기본: bottom_right)")
+    parser.add_argument("--watermark-color", default="white",
+                        help="워터마크 색상 (기본: white)")
+    parser.add_argument("--watermark-opacity", type=float, default=0.7,
+                        help="워터마크 투명도 (0.0~1.0, 기본: 0.7)")
+
+
 def resolve_font_path(args) -> str:
     """--font 인자를 해석하여 폰트 파일 경로를 반환한다."""
     if args.font:

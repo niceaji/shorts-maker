@@ -32,10 +32,14 @@ from PIL import Image
 
 from shortmaker import OUT_W, OUT_H, FPS
 from shortmaker.cli import (
+    add_audio_args,
     add_bgm_args,
     add_display_args,
+    add_intro_outro_args,
+    add_speed_args,
     add_subtitle_args,
     add_title_args,
+    add_watermark_args,
     resolve_font_path,
 )
 from shortmaker.ffmpeg import (
@@ -43,9 +47,14 @@ from shortmaker.ffmpeg import (
     ENCODER_VIDEO,
     build_bgm_filter,
     concat_segments,
+    prepare_intro_outro,
 )
 from shortmaker.files import find_media_files
-from shortmaker.overlay import create_subtitle_overlay, create_title_overlay
+from shortmaker.overlay import (
+    create_subtitle_overlay,
+    create_title_overlay,
+    create_watermark_overlay,
+)
 
 
 EFFECTS = [
@@ -162,13 +171,19 @@ def _get_image_size(img_path):
 
 
 def process_image_segment(img_path, effect, duration, zoom_range, out_path,
-                          subtitle_png=None, fill=False, zoom=1.1):
+                          subtitle_png=None, fill=False, zoom=1.1, speed=1.0):
     """이미지를 켄번즈 효과와 함께 세그먼트 mp4로 변환한다.
 
     fill=True: 전체 채우기 (scale+crop으로 1080x1920 커버)
     fill=False: 블러 배경(정지) + 전경(켄번즈 모션) 분리 합성
+    speed != 1.0이면 zoompan 프레임 수를 조정하고 setpts 필터를 추가한다.
     """
-    zoompan = build_zoompan_filter(effect, duration, zoom_range)
+    # 속도 적용: duration을 speed로 나눠 zoompan 프레임 수 조정
+    adjusted_duration = duration / speed if speed != 1.0 else duration
+    zoompan = build_zoompan_filter(effect, adjusted_duration, zoom_range)
+
+    # speed != 1.0이면 setpts 필터 추가
+    speed_filter = f",setpts=PTS/{speed}" if speed != 1.0 else ""
 
     if fill:
         # 전체 채우기: scale+crop → zoompan
@@ -176,7 +191,7 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
             f"scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
             f"crop={OUT_W}:{OUT_H}"
         )
-        main_filter = f"[0:v]{pre_filter},{zoompan}"
+        main_filter = f"[0:v]{pre_filter},{zoompan}{speed_filter}"
     else:
         # 블러 배경(정지) + 전경(켄번즈 모션) 분리
         # 전경 크기 계산
@@ -187,7 +202,7 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
         fg_h = fg_h // 2 * 2
 
         # zoompan 필터를 전경 크기에 맞게 재생성
-        frames = int(duration * FPS)
+        frames = int(adjusted_duration * FPS)
         zw, zh = fg_w * 2, fg_h * 2
         zp_base = f"s={zw}x{zh}:fps={FPS}:d={frames}"
         z = zoom_range
@@ -225,7 +240,7 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
             x_expr = "iw/2-(iw/zoom/2)"
             y_expr = "ih/2-(ih/zoom/2)"
 
-        fg_zoompan = f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':{zp_base},scale={fg_w}:{fg_h}"
+        fg_zoompan = f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':{zp_base},scale={fg_w}:{fg_h}{speed_filter}"
 
         main_filter = (
             f"[0:v]split=2[bg_in][fg_in];"
@@ -268,27 +283,44 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
 def concat_with_transition(segment_files, output_path, tmp_dir, transition,
                            title=None, font_path=None, font_color="white",
                            bgm=None, bgm_volume=0.3, bgm_fade=1.5,
-                           total_duration=None, fill=False, zoom=1.1):
+                           total_duration=None, fill=False, zoom=1.1,
+                           watermark=None, watermark_position="bottom_right",
+                           watermark_color="white", watermark_opacity=0.7,
+                           intro=None, outro=None):
     """세그먼트들을 하나의 영상으로 합친다.
 
     transition > 0이면 xfade 필터로 전환 효과 적용.
     transition == 0이면 concat demuxer 사용 (빠르고 단순).
-    제목 오버레이와 BGM 믹싱도 처리한다.
+    제목/워터마크 오버레이와 BGM 믹싱도 처리한다.
     """
     title_png = None
     if title and font_path:
         title_png = create_title_overlay(title, font_path, color=font_color,
                                         fill=fill, zoom=zoom, tmp_dir=tmp_dir)
 
+    watermark_png = None
+    if watermark and font_path:
+        watermark_png = create_watermark_overlay(
+            watermark, font_path,
+            position=watermark_position,
+            color=watermark_color,
+            opacity=watermark_opacity,
+            tmp_dir=tmp_dir,
+        )
+
     if transition > 0 and len(segment_files) > 1:
         _concat_xfade(segment_files, output_path, tmp_dir, transition,
-                      title_png, bgm, bgm_volume, bgm_fade, total_duration)
+                      title_png, bgm, bgm_volume, bgm_fade, total_duration,
+                      watermark_png=watermark_png,
+                      intro=intro, outro=outro)
     else:
         ok, stderr = concat_segments(
             segment_files, output_path, tmp_dir,
             title_png=title_png,
             bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
             total_duration=total_duration,
+            intro=intro, outro=outro,
+            watermark_png=watermark_png,
         )
         if not ok:
             print("  합치기 실패 (demuxer):")
@@ -298,13 +330,22 @@ def concat_with_transition(segment_files, output_path, tmp_dir, transition,
 
 
 def _concat_xfade(segment_files, output_path, tmp_dir, transition,
-                  title_png, bgm, bgm_volume, bgm_fade, total_duration):
+                  title_png, bgm, bgm_volume, bgm_fade, total_duration,
+                  watermark_png=None, intro=None, outro=None):
     """xfade 필터로 세그먼트 간 크로스페이드 전환 효과를 적용한다."""
-    n = len(segment_files)
+    # 인트로/아웃트로를 세그먼트 목록에 포함
+    all_segments = []
+    if intro is not None:
+        all_segments.append(intro)
+    all_segments.extend(segment_files)
+    if outro is not None:
+        all_segments.append(outro)
+
+    n = len(all_segments)
 
     # 각 세그먼트 입력
     cmd = ["ffmpeg", "-y"]
-    for seg in segment_files:
+    for seg in all_segments:
         cmd += ["-i", str(seg)]
 
     input_idx = n
@@ -316,6 +357,13 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
         input_idx += 1
     else:
         title_idx = None
+
+    if watermark_png:
+        extra_inputs.append(("-loop", "1", "-i", watermark_png))
+        watermark_idx = input_idx
+        input_idx += 1
+    else:
+        watermark_idx = None
 
     if bgm:
         extra_inputs.append(("-i", str(bgm)))
@@ -370,15 +418,25 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
             prev_a = out_label
         ax_label = "[ax]"
 
-    # 제목 오버레이
+    # 제목 오버레이 (페이드인)
     if title_idx is not None:
         fc_parts.append(
             f"[{title_idx}:v]format=rgba,fade=t=in:st=0:d=1:alpha=1[title];"
-            f"{vx_label}[title]overlay=0:0:shortest=1[vfinal]"
+            f"{vx_label}[title]overlay=0:0:shortest=1[vafter_title]"
+        )
+        vafter_title_label = "[vafter_title]"
+    else:
+        vafter_title_label = vx_label
+
+    # 워터마크 오버레이 (페이드 없이 고정)
+    if watermark_idx is not None:
+        fc_parts.append(
+            f"[{watermark_idx}:v]format=rgba[wm];"
+            f"{vafter_title_label}[wm]overlay=0:0:shortest=1[vfinal]"
         )
         vfinal_label = "[vfinal]"
     else:
-        vfinal_label = vx_label
+        vfinal_label = vafter_title_label
 
     # BGM 믹싱
     if bgm_idx is not None:
@@ -406,6 +464,8 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
             title_png=title_png,
             bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
             total_duration=total_duration,
+            intro=intro, outro=outro,
+            watermark_png=watermark_png,
         )
         if not ok:
             print("  합치기 실패 (demuxer):")
@@ -418,58 +478,81 @@ def main():
     parser = argparse.ArgumentParser(
         description="이미지 디렉토리로 세로형 숏폼 영상(9:16, 1080x1920)을 생성합니다.",
         fromfile_prefix_chars="@",
+        epilog=(
+            "예시:\n"
+            "  %(prog)s -s ./img                     # 기본 (랜덤 효과)\n"
+            "  %(prog)s -s ./img --fill              # 전체 채우기\n"
+            "  %(prog)s -s ./img --effect zoom_in    # 효과 지정\n"
+            "  %(prog)s -s ./img --bgm music.mp3     # BGM 추가\n"
+            "  %(prog)s @preset.txt                  # 프리셋 파일"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument(
+
+    # 소스 옵션
+    src_group = parser.add_argument_group("소스 옵션")
+    src_group.add_argument(
         "--src", "-s",
         required=True,
         help="이미지 소스 디렉토리 (필수)",
     )
-    parser.add_argument(
-        "--out", "-o",
-        default="./image_shorts.mp4",
-        help="출력 파일 경로 (기본: ./image_shorts.mp4)",
-    )
-    parser.add_argument(
+    src_group.add_argument(
         "--ext", "-e",
         nargs="+",
         default=["jpg", "png", "jpeg", "webp"],
         help="이미지 파일 확장자들 (기본: jpg png jpeg webp)",
     )
-    parser.add_argument(
+
+    # 출력 옵션
+    out_group = parser.add_argument_group("출력 옵션")
+    out_group.add_argument(
+        "--out", "-o",
+        default="./image_shorts.mp4",
+        help="출력 파일 경로 (기본: ./image_shorts.mp4)",
+    )
+    out_group.add_argument(
         "--duration", "-t",
         type=float,
         default=3.0,
         help="이미지당 재생 시간 (초, 기본: 3.0)",
     )
-    parser.add_argument(
+    out_group.add_argument(
+        "--shuffle",
+        action="store_true",
+        default=False,
+        help="이미지 순서 무작위 (기본: 꺼짐)",
+    )
+
+    # 효과 옵션
+    fx_group = parser.add_argument_group("효과 옵션")
+    fx_group.add_argument(
         "--effect",
         choices=["zoom_in", "zoom_out", "pan_left", "pan_right", "random"],
         default="random",
         help="켄번즈 애니메이션 효과 종류 (기본: random)",
     )
-    parser.add_argument(
+    fx_group.add_argument(
         "--zoom-range",
         type=float,
         default=1.15,
         dest="zoom_range",
         help="켄번즈 최대 줌 배율 (기본: 1.15)",
     )
-    parser.add_argument(
-        "--shuffle",
-        action="store_true",
-        default=False,
-        help="이미지 순서 무작위 (기본: 꺼짐)",
-    )
-    parser.add_argument(
+    fx_group.add_argument(
         "--transition",
         type=float,
         default=0.5,
         help="이미지 간 전환 효과 길이 (초, 0이면 전환 없음, 기본: 0.5)",
     )
+
     add_title_args(parser)
     add_subtitle_args(parser)
     add_bgm_args(parser)
     add_display_args(parser)
+    add_speed_args(parser)
+    add_audio_args(parser)
+    add_watermark_args(parser)
+    add_intro_outro_args(parser)
 
     args = parser.parse_args()
 
@@ -485,12 +568,22 @@ def main():
     print(f"줌 범위: 1.0 ~ {args.zoom_range}")
     print(f"전환 효과: {args.transition}초" if args.transition > 0 else "전환 효과: 없음")
     print(f"셔플: {'켜짐' if args.shuffle else '꺼짐'}")
+    if args.speed != 1.0:
+        print(f"재생 속도: {args.speed}x")
+    if args.mute:
+        print("음소거: 켜짐 (무음 트랙 유지)")
     if args.title:
         print(f"제목: {args.title}")
     if args.subtitle:
         print(f"자막: {args.subtitle}")
     if args.bgm:
         print(f"BGM: {args.bgm} (볼륨: {args.bgm_volume})")
+    if args.watermark:
+        print(f"워터마크: {args.watermark} ({args.watermark_position})")
+    if args.intro:
+        print(f"인트로: {args.intro}")
+    if args.outro:
+        print(f"아웃트로: {args.outro}")
     print()
 
     # 이미지 검색
@@ -517,6 +610,15 @@ def main():
         processed = 0
         skipped = 0
 
+        # 인트로/아웃트로 준비
+        intro_seg, outro_seg = prepare_intro_outro(
+            args.intro, args.outro, OUT_W, OUT_H, tmp_dir
+        )
+        if args.intro and intro_seg is None:
+            print(f"경고: 인트로 파일 변환 실패 ({args.intro}). 건너뜁니다.")
+        if args.outro and outro_seg is None:
+            print(f"경고: 아웃트로 파일 변환 실패 ({args.outro}). 건너뜁니다.")
+
         for i, img_path in enumerate(images):
             print(f"[{i + 1}/{len(images)}] 처리중: {img_path.name}")
 
@@ -540,6 +642,7 @@ def main():
                 img_path, effect, args.duration, args.zoom_range,
                 seg_path, subtitle_png=sub_png,
                 fill=args.fill, zoom=args.zoom,
+                speed=args.speed,
             )
 
             if not ok:
@@ -572,6 +675,11 @@ def main():
                 title=args.title, font_path=font_path, font_color=args.font_color,
                 bgm=args.bgm, bgm_volume=args.bgm_volume, bgm_fade=args.bgm_fade,
                 total_duration=total_duration, fill=args.fill, zoom=args.zoom,
+                watermark=args.watermark,
+                watermark_position=args.watermark_position,
+                watermark_color=args.watermark_color,
+                watermark_opacity=args.watermark_opacity,
+                intro=intro_seg, outro=outro_seg,
             )
         else:
             print(f"{len(segment_files)}개 세그먼트 합치기 -> {output_path}")
@@ -581,6 +689,11 @@ def main():
                 title=args.title, font_path=font_path, font_color=args.font_color,
                 bgm=args.bgm, bgm_volume=args.bgm_volume, bgm_fade=args.bgm_fade,
                 total_duration=total_duration, fill=args.fill, zoom=args.zoom,
+                watermark=args.watermark,
+                watermark_position=args.watermark_position,
+                watermark_color=args.watermark_color,
+                watermark_opacity=args.watermark_opacity,
+                intro=intro_seg, outro=outro_seg,
             )
 
     # 결과 확인

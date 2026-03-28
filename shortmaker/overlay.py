@@ -83,3 +83,47 @@ def create_subtitle_overlay(text, font_path, width=OUT_W, height=OUT_H,
     out_path = Path(tmp_dir) / f"subtitle_{index:04d}.png"
     img.save(str(out_path))
     return str(out_path)
+
+
+def create_watermark_overlay(text, font_path, width=OUT_W, height=OUT_H,
+                             position="bottom_right", color="white", opacity=0.7,
+                             tmp_dir=None):
+    """워터마크 텍스트 PNG를 생성한다.
+
+    position: top_left, top_right, bottom_left, bottom_right
+    opacity: 0.0(투명)~1.0(불투명)
+    """
+    try:
+        font = ImageFont.truetype(font_path, 32)
+    except Exception:
+        return None
+
+    # 알파값 계산 (투명도를 0~255 범위로 변환)
+    alpha = int(255 * max(0.0, min(1.0, opacity)))
+    r, g, b, _ = parse_rgba(color, default=(255, 255, 255, 255))
+    rgba = (r, g, b, alpha)
+
+    # 텍스트 크기 측정
+    dummy = Image.new("RGBA", (1, 1))
+    draw = ImageDraw.Draw(dummy)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    # 위치 계산 (가장자리에서 30px 여백)
+    margin = 30
+    if position == "top_left":
+        x, y = margin, margin
+    elif position == "top_right":
+        x, y = width - tw - margin, margin
+    elif position == "bottom_left":
+        x, y = margin, height - th - margin
+    else:  # bottom_right (기본값)
+        x, y = width - tw - margin, height - th - margin
+
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.text((x, y), text, font=font, fill=rgba)
+
+    out_path = Path(tmp_dir) / "watermark_overlay.png"
+    img.save(str(out_path))
+    return str(out_path)
