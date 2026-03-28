@@ -69,15 +69,16 @@ def get_video_info(filepath):
     return duration, has_audio
 
 
-def find_clips(src_dir, date_str, ext):
+def find_clips(src_dir, date_str, exts):
     """날짜 문자열로 필터링하여 영상 파일 목록을 반환한다. date_str이 None이면 전체."""
     src_path = Path(src_dir)
-    if date_str:
-        pattern = f"*{date_str}*.{ext}"
-    else:
-        pattern = f"*.{ext}"
-    clips = sorted(src_path.rglob(pattern))
-    return clips
+    ext_set = {e.lower() for e in exts}
+    clips = []
+    for p in src_path.rglob("*"):
+        if p.suffix.lower().lstrip(".") in ext_set:
+            if date_str is None or date_str in p.name:
+                clips.append(p)
+    return sorted(clips)
 
 
 def build_filter(zoom, enhance):
@@ -342,8 +343,9 @@ def main():
     )
     parser.add_argument(
         "--ext", "-e",
-        default="MP4",
-        help="영상 파일 확장자 (기본: MP4)",
+        nargs="+",
+        default=["MP4", "MOV"],
+        help="영상 파일 확장자들 (기본: MP4 MOV)",
     )
     parser.add_argument(
         "--duration", "-t",
@@ -431,7 +433,7 @@ def main():
     print(f"날짜 필터: {date_str or '전체 (소스 폴더 직접 지정)'}")
     print(f"소스: {args.src}")
     print(f"출력: {output_path}")
-    print(f"확장자: {args.ext}")
+    print(f"확장자: {' '.join(args.ext)}")
     print(f"클립당 길이: {args.duration}초")
     print(f"줌: {args.zoom}")
     print(f"색보정: {'켜짐' if args.enhance else '꺼짐'}")
@@ -441,7 +443,11 @@ def main():
     # 클립 검색
     clips = find_clips(args.src, date_str, args.ext)
     if not clips:
-        label = f"*{date_str}*.{args.ext}" if date_str else f"*.{args.ext}"
+        ext_patterns = ", ".join(f"*.{ext}" for ext in args.ext)
+        if date_str:
+            label = ", ".join(f"*{date_str}*.{ext}" for ext in args.ext)
+        else:
+            label = ext_patterns
         print(f"{args.src}에서 {label} 패턴에 맞는 클립을 찾을 수 없습니다.")
         sys.exit(1)
 

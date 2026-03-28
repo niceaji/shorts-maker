@@ -14,15 +14,12 @@ extract_frames.py - DJI 영상 클립에서 랜덤 프레임 추출
 
 import argparse
 import json
-import math
 import random
 import subprocess
 import sys
 from datetime import date
 from pathlib import Path
 
-import cv2
-import numpy as np
 
 
 def get_video_duration(filepath: Path) -> float | None:
@@ -79,6 +76,9 @@ def level_horizon(path: Path) -> float | None:
     각도 분산이 크면(건물 등 복잡한 씬) 건너뛰고,
     보정 각도가 0.3° 미만이면 이미 수평으로 판단한다.
     """
+    import math
+    import cv2
+    import numpy as np
     img = cv2.imread(str(path))
     if img is None:
         return None
@@ -139,26 +139,15 @@ def level_horizon(path: Path) -> float | None:
     return correction
 
 
-def find_video_files(src: Path, date_str: str | None, ext: str) -> list[Path]:
+def find_video_files(src: Path, date_str: str | None, exts: list[str]) -> list[Path]:
     """날짜 문자열로 필터링하여 영상 파일 목록을 반환한다. date_str이 None이면 전체."""
-    ext_lower = ext.lower().lstrip(".")
-    matches = []
-    for p in src.rglob(f"*.{ext_lower}"):
-        if date_str is None or date_str in p.name:
-            matches.append(p)
-    # 대소문자 구분 파일시스템 대응
-    if not matches:
-        for p in src.rglob(f"*.{ext.upper()}"):
+    ext_set = {e.lower().lstrip(".") for e in exts}
+    clips = []
+    for p in src.rglob("*"):
+        if p.suffix.lower().lstrip(".") in ext_set:
             if date_str is None or date_str in p.name:
-                matches.append(p)
-    # 중복 제거
-    seen = set()
-    unique = []
-    for p in matches:
-        if p not in seen:
-            seen.add(p)
-            unique.append(p)
-    return sorted(unique)
+                clips.append(p)
+    return sorted(clips)
 
 
 def main() -> None:
@@ -187,9 +176,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--ext", "-e",
-        default="MP4",
+        nargs="+",
+        default=["MP4", "MOV"],
         metavar="EXT",
-        help="영상 파일 확장자 (기본: MP4)",
+        help="영상 파일 확장자 (기본: MP4 MOV)",
     )
     parser.add_argument(
         "--enhance", action="store_true", default=True,
@@ -218,7 +208,8 @@ def main() -> None:
 
     out.mkdir(parents=True, exist_ok=True)
 
-    label = f"*{date_str}*.{args.ext}" if date_str else f"*.{args.ext}"
+    ext_label = ",".join(args.ext)
+    label = f"*{date_str}*.{{{ext_label}}}" if date_str else f"*.{{{ext_label}}}"
     print(f"{src}에서 {label} 검색중 ...")
     video_files = find_video_files(src, date_str, args.ext)
 
