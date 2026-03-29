@@ -1,0 +1,22 @@
+[project]
+name = "shorts-maker"
+version = "0.1.0"
+description = "DJI 영상/이미지에서 숏폼 영상 자동 생성"
+requires-python = ">=3.10"
+dependencies = [
+    "Pillow",
+    "argcomplete",
+]
+
+[project.optional-dependencies]
+detect = ["opencv-python-headless"]
+
+[project.scripts]
+shorts = "shortmaker.main:main"
+
+[tool.setuptools.packages.find]
+include = ["shortmaker*"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"

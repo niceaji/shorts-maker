@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
 """
 extract_frames.py - DJI 영상 클립에서 랜덤 프레임 추출
 
@@ -12,6 +13,7 @@ extract_frames.py - DJI 영상 클립에서 랜덤 프레임 추출
     python3 extract_frames.py --level                  # 수평 보정 (실험적)
 """
 
+import argcomplete
 import argparse
 import random
 import subprocess
@@ -116,7 +118,8 @@ def level_horizon(path: Path) -> float | None:
     return correction
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """CLI 인자 파서를 생성하여 반환한다."""
     today = date.today().strftime("%Y%m%d")
 
     parser = argparse.ArgumentParser(
@@ -159,8 +162,11 @@ def main() -> None:
         "--level", action="store_true", default=False,
         help="수평 자동 보정 (실험적, 기본: 꺼짐)",
     )
-    args = parser.parse_args()
+    return parser
 
+
+def run(args) -> None:
+    """실제 작업 수행 (서브커맨드에서도 호출됨)"""
     src = Path(args.src)
     out = Path(args.out)
 
@@ -215,6 +221,14 @@ def main() -> None:
             skipped += 1
 
     print(f"\n완료. 전체: {total}  |  추출: {extracted}  |  건너뜀: {skipped}")
+
+
+def main() -> None:
+    """CLI 진입점 — 인자를 파싱하고 run()을 호출한다."""
+    parser = build_parser()
+    argcomplete.autocomplete(parser)
+    args = parser.parse_args()
+    run(args)
 
 
 if __name__ == "__main__":

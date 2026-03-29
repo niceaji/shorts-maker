@@ -19,5 +19,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+# 빌드
+*.egg-info/
+
 # OMC
 .omc/

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
 """
 make_shorts.py - DJI 영상 클립으로 세로형 숏폼 영상 생성
 
@@ -20,6 +21,7 @@ make_shorts.py - DJI 영상 클립으로 세로형 숏폼 영상 생성
     1.1
 """
 
+import argcomplete
 import argparse
 import random
 import shutil
@@ -324,7 +326,8 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
             sys.exit(1)
 
 
-def main():
+def build_parser():
+    """CLI 인자 파서를 생성하여 반환한다."""
     today = datetime.now().strftime("%Y%m%d")
 
     epilog = """예시:
@@ -412,8 +415,11 @@ def main():
     # 인트로/아웃트로 옵션
     add_intro_outro_args(parser)
 
-    args = parser.parse_args()
+    return parser
 
+
+def run(args):
+    """실제 작업 수행 (서브커맨드에서도 호출됨)"""
     # --src를 직접 지정한 경우 날짜 필터 무시 (폴더 내 모든 영상 대상)
     src_explicitly_set = args.src != "/Volumes/SD_Card/DCIM"
     date_str = None if src_explicitly_set else args.date
@@ -628,6 +634,14 @@ def main():
     else:
         print("출력 파일을 찾을 수 없습니다.")
         sys.exit(1)
+
+
+def main():
+    """CLI 진입점 — 인자를 파싱하고 run()을 호출한다."""
+    parser = build_parser()
+    argcomplete.autocomplete(parser)
+    args = parser.parse_args()
+    run(args)
 
 
 if __name__ == "__main__":

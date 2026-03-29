@@ -1,5 +1,6 @@
 """컨택트 시트(그리드 이미지) 생성 스크립트 — 이미지 또는 영상 클립 디렉토리에서 썸네일 그리드를 만든다."""
 
+import argcomplete
 import argparse
 import subprocess
 import sys
@@ -270,11 +271,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    """엔트리포인트 — CLI 인자를 파싱하고 컨택트 시트를 생성한다."""
-    parser = build_parser()
-    args = parser.parse_args()
+def run(args) -> None:
+    """실제 작업 수행 (서브커맨드에서도 호출됨)"""
     build_contact_sheet(args)
+
+
+def main() -> None:
+    """CLI 진입점 — 인자를 파싱하고 run()을 호출한다."""
+    parser = build_parser()
+    argcomplete.autocomplete(parser)
+    args = parser.parse_args()
+    run(args)
 
 
 if __name__ == "__main__":
