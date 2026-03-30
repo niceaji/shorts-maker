@@ -424,7 +424,7 @@ def run(args):
     src_explicitly_set = args.src != "/Volumes/SD_Card/DCIM"
     date_str = None if src_explicitly_set else args.date
     output_path = args.out or f"./shorts_{args.date}.mp4"
-    output_path = Path(output_path)
+    output_path = Path(output_path).expanduser()
 
     print(f"날짜 필터: {date_str or '전체 (소스 폴더 직접 지정)'}")
     print(f"소스: {args.src}")
@@ -441,7 +441,7 @@ def run(args):
     print()
 
     # 클립 검색
-    clips = find_media_files(Path(args.src), args.ext, date_str=date_str)
+    clips = find_media_files(Path(args.src).expanduser(), args.ext, date_str=date_str)
     if not clips:
         ext_patterns = ", ".join(f"*.{ext}" for ext in args.ext)
         if date_str:

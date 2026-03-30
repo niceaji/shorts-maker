@@ -32,6 +32,12 @@ from pathlib import Path
 
 from PIL import Image
 
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
 from shortmaker import OUT_W, OUT_H, FPS
 from shortmaker.cli import (
     add_audio_args,
@@ -60,18 +66,12 @@ from shortmaker.overlay import (
 
 
 EFFECTS = [
-    "zoom_in_center",
-    "zoom_out_center",
-    "zoom_in_top",
-    "zoom_in_bottom",
+    "zoom_in",
+    "zoom_out",
     "pan_left",
     "pan_right",
     "pan_up",
     "pan_down",
-    "zoom_in_pan_right",
-    "zoom_in_pan_left",
-    "zoom_out_pan_up",
-    "zoom_out_pan_down",
 ]
 
 
@@ -79,42 +79,29 @@ def get_effect(effect_type):
     """효과 타입에 따라 실제 효과 이름을 반환한다. random이면 무작위 선택."""
     if effect_type == "random":
         return random.choice(EFFECTS)
-    # 호환성: 기존 이름도 지원
-    compat = {"zoom_in": "zoom_in_center", "zoom_out": "zoom_out_center"}
-    return compat.get(effect_type, effect_type)
+    return effect_type
 
 
 def build_zoompan_filter(effect, duration, zoom_range=1.15):
     """켄번즈 효과에 맞는 ffmpeg zoompan 필터 문자열을 반환한다.
 
-    부드러운 모션을 위해 입력 이미지를 2배 해상도로 확대 후 zoompan 적용.
+    6가지 단순 효과: zoom_in, zoom_out, pan_left/right/up/down
+    원본 해상도에서 직접 처리하여 부드러운 30fps 출력.
     """
     frames = int(duration * FPS)
-    # 2배 해상도로 작업 후 최종 크기로 스케일 → 부드러운 모션
-    zw, zh = OUT_W * 2, OUT_H * 2
-    base = f"s={zw}x{zh}:fps={FPS}:d={frames}"
+    base = f"s={OUT_W}x{OUT_H}:fps={FPS}:d={frames}"
     z = zoom_range
     step = (z - 1.0) / frames
 
-    if effect == "zoom_in_center":
+    if effect == "zoom_in":
         filt = (
             f"zoompan=z='1+{step:.8f}*on':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':{base}"
         )
-    elif effect == "zoom_out_center":
+    elif effect == "zoom_out":
         filt = (
             f"zoompan=z='{z}-{step:.8f}*on':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':{base}"
-        )
-    elif effect == "zoom_in_top":
-        filt = (
-            f"zoompan=z='1+{step:.8f}*on':"
-            f"x='iw/2-(iw/zoom/2)':y='0':{base}"
-        )
-    elif effect == "zoom_in_bottom":
-        filt = (
-            f"zoompan=z='1+{step:.8f}*on':"
-            f"x='iw/2-(iw/zoom/2)':y='ih-ih/zoom':{base}"
         )
     elif effect == "pan_left":
         filt = (
@@ -136,34 +123,26 @@ def build_zoompan_filter(effect, duration, zoom_range=1.15):
             f"zoompan=z={z}:"
             f"x='iw/2-iw/{z}/2':y='(ih-ih/{z})*(on/{frames})':{base}"
         )
-    elif effect == "zoom_in_pan_right":
-        filt = (
-            f"zoompan=z='1+{step:.8f}*on':"
-            f"x='(iw-iw/zoom)*(on/{frames})':y='ih/2-(ih/zoom/2)':{base}"
-        )
-    elif effect == "zoom_in_pan_left":
-        filt = (
-            f"zoompan=z='1+{step:.8f}*on':"
-            f"x='(iw-iw/zoom)*(1-on/{frames})':y='ih/2-(ih/zoom/2)':{base}"
-        )
-    elif effect == "zoom_out_pan_up":
-        filt = (
-            f"zoompan=z='{z}-{step:.8f}*on':"
-            f"x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(1-on/{frames})':{base}"
-        )
-    elif effect == "zoom_out_pan_down":
-        filt = (
-            f"zoompan=z='{z}-{step:.8f}*on':"
-            f"x='iw/2-(iw/zoom/2)':y='(ih-ih/zoom)*(on/{frames})':{base}"
-        )
     else:
         filt = (
             f"zoompan=z='1+{step:.8f}*on':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':{base}"
         )
 
-    # 2배 해상도에서 작업 후 최종 크기로 스케일다운
-    return f"{filt},scale={OUT_W}:{OUT_H}"
+    return filt
+
+
+_HEIC_EXTS = {".heic", ".heif"}
+
+
+def _prepare_image(img_path, tmp_dir):
+    """ffmpeg이 읽을 수 있는 이미지 경로를 반환한다. HEIC는 JPG로 변환."""
+    if Path(img_path).suffix.lower() in _HEIC_EXTS:
+        im = Image.open(img_path)
+        converted = Path(tmp_dir) / (Path(img_path).stem + ".jpg")
+        im.save(str(converted), "JPEG", quality=95)
+        return converted
+    return img_path
 
 
 def _get_image_size(img_path):
@@ -173,13 +152,17 @@ def _get_image_size(img_path):
 
 
 def process_image_segment(img_path, effect, duration, zoom_range, out_path,
-                          subtitle_png=None, fill=False, zoom=1.1, speed=1.0):
+                          subtitle_png=None, fill=False, zoom=1.1, speed=1.0, tmp_dir=None):
     """이미지를 켄번즈 효과와 함께 세그먼트 mp4로 변환한다.
 
     fill=True: 전체 채우기 (scale+crop으로 1080x1920 커버)
     fill=False: 블러 배경(정지) + 전경(켄번즈 모션) 분리 합성
     speed != 1.0이면 zoompan 프레임 수를 조정하고 setpts 필터를 추가한다.
     """
+    # HEIC 등 ffmpeg이 못 읽는 포맷은 JPG로 변환
+    if tmp_dir:
+        img_path = _prepare_image(img_path, tmp_dir)
+
     # 속도 적용: duration을 speed로 나눠 zoompan 프레임 수 조정
     adjusted_duration = duration / speed if speed != 1.0 else duration
     zoompan = build_zoompan_filter(effect, adjusted_duration, zoom_range)
@@ -205,8 +188,7 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
 
         # zoompan 필터를 전경 크기에 맞게 재생성
         frames = int(adjusted_duration * FPS)
-        zw, zh = fg_w * 2, fg_h * 2
-        zp_base = f"s={zw}x{zh}:fps={FPS}:d={frames}"
+        zp_base = f"s={fg_w}x{fg_h}:fps={FPS}:d={frames}"
         z = zoom_range
         step = (z - 1.0) / frames
 
@@ -232,17 +214,11 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
         elif "pan_down" in effect:
             x_expr = "iw/2-iw/zoom/2"
             y_expr = f"(ih-ih/zoom)*(on/{frames})"
-        elif "top" in effect:
-            x_expr = "iw/2-(iw/zoom/2)"
-            y_expr = "0"
-        elif "bottom" in effect:
-            x_expr = "iw/2-(iw/zoom/2)"
-            y_expr = "ih-ih/zoom"
         else:
             x_expr = "iw/2-(iw/zoom/2)"
             y_expr = "ih/2-(ih/zoom/2)"
 
-        fg_zoompan = f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':{zp_base},scale={fg_w}:{fg_h}{speed_filter}"
+        fg_zoompan = f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':{zp_base}{speed_filter}"
 
         main_filter = (
             f"[0:v]split=2[bg_in][fg_in];"
@@ -502,8 +478,8 @@ def build_parser():
     src_group.add_argument(
         "--ext", "-e",
         nargs="+",
-        default=["jpg", "png", "jpeg", "webp"],
-        help="이미지 파일 확장자들 (기본: jpg png jpeg webp)",
+        default=["jpg", "png", "jpeg", "webp", "heic"],
+        help="이미지 파일 확장자들 (기본: jpg png jpeg webp heic)",
     )
 
     # 출력 옵션
@@ -562,7 +538,7 @@ def build_parser():
 
 def run(args):
     """실제 작업 수행 (서브커맨드에서도 호출됨)"""
-    output_path = Path(args.out)
+    output_path = Path(args.out).expanduser()
     font_path = resolve_font_path(args)
 
     print("=== 이미지 숏폼 영상 생성기 ===")
@@ -593,7 +569,7 @@ def run(args):
     print()
 
     # 이미지 검색
-    images = find_media_files(Path(args.src), args.ext, recursive=False)
+    images = find_media_files(Path(args.src).expanduser(), args.ext, recursive=False)
     if not images:
         ext_list = ", ".join(f"*.{e}" for e in args.ext)
         print(f"오류: {args.src} 에서 이미지 파일을 찾을 수 없습니다. ({ext_list})")
@@ -648,7 +624,7 @@ def run(args):
                 img_path, effect, args.duration, args.zoom_range,
                 seg_path, subtitle_png=sub_png,
                 fill=args.fill, zoom=args.zoom,
-                speed=args.speed,
+                speed=args.speed, tmp_dir=tmp_dir,
             )
 
             if not ok:

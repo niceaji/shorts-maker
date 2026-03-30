@@ -9,6 +9,12 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
 from shortmaker import DEFAULT_FONT
 from shortmaker.color import parse_rgba
 from shortmaker.files import find_media_files
@@ -123,7 +129,7 @@ def build_contact_sheet(args: argparse.Namespace) -> None:
     Args:
         args: argparse 파싱 결과
     """
-    src = Path(args.src)
+    src = Path(args.src).expanduser()
     if not src.is_dir():
         print(f"오류: 소스 디렉토리를 찾을 수 없습니다 — {src}", file=sys.stderr)
         sys.exit(1)
@@ -220,7 +226,7 @@ def build_contact_sheet(args: argparse.Namespace) -> None:
             draw.text((x, label_y), label_text, font=label_font, fill=font_color)
 
     # 저장
-    out_path = Path(args.out)
+    out_path = Path(args.out).expanduser()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(str(out_path), "JPEG", quality=92)
 
@@ -242,9 +248,9 @@ def build_parser() -> argparse.ArgumentParser:
     basic.add_argument("--out", "-o", default="./contact_sheet.jpg", metavar="파일",
                        help="출력 파일 경로 (기본: ./contact_sheet.jpg)")
     basic.add_argument("--ext", "-e", nargs="+",
-                       default=["jpg", "png", "jpeg", "webp"],
+                       default=["jpg", "png", "jpeg", "webp", "heic"],
                        metavar="확장자",
-                       help="대상 파일 확장자 (기본: jpg png jpeg webp)")
+                       help="대상 파일 확장자 (기본: jpg png jpeg webp heic)")
     basic.add_argument("--cols", type=int, default=4, metavar="열수",
                        help="그리드 열 수 (기본: 4)")
 

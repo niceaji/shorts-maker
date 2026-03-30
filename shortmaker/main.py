@@ -137,8 +137,8 @@ def _build_image_parser(subparsers):
     src_group.add_argument(
         "--ext", "-e",
         nargs="+",
-        default=["jpg", "png", "jpeg", "webp"],
-        help="이미지 파일 확장자들 (기본: jpg png jpeg webp)",
+        default=["jpg", "png", "jpeg", "webp", "heic"],
+        help="이미지 파일 확장자들 (기본: jpg png jpeg webp heic)",
     )
 
     # 출력 옵션
@@ -276,9 +276,9 @@ def _build_contact_parser(subparsers):
     basic.add_argument("--out", "-o", default="./contact_sheet.jpg", metavar="파일",
                        help="출력 파일 경로 (기본: ./contact_sheet.jpg)")
     basic.add_argument("--ext", "-e", nargs="+",
-                       default=["jpg", "png", "jpeg", "webp"],
+                       default=["jpg", "png", "jpeg", "webp", "heic"],
                        metavar="확장자",
-                       help="대상 파일 확장자 (기본: jpg png jpeg webp)")
+                       help="대상 파일 확장자 (기본: jpg png jpeg webp heic)")
     basic.add_argument("--cols", type=int, default=4, metavar="열수",
                        help="그리드 열 수 (기본: 4)")
 
