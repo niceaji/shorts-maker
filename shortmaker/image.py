@@ -64,7 +64,6 @@ from shortmaker.overlay import (
     create_watermark_overlay,
 )
 
-
 EFFECTS = [
     "zoom_in",
     "zoom_out",
@@ -86,7 +85,6 @@ def build_zoompan_filter(effect, duration, zoom_range=1.15):
     """켄번즈 효과에 맞는 ffmpeg zoompan 필터 문자열을 반환한다.
 
     6가지 단순 효과: zoom_in, zoom_out, pan_left/right/up/down
-    원본 해상도에서 직접 처리하여 부드러운 30fps 출력.
     """
     frames = int(duration * FPS)
     base = f"s={OUT_W}x{OUT_H}:fps={FPS}:d={frames}"
@@ -186,13 +184,11 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
         fg_w = fg_w // 2 * 2  # 짝수로
         fg_h = fg_h // 2 * 2
 
-        # zoompan 필터를 전경 크기에 맞게 재생성
         frames = int(adjusted_duration * FPS)
         zp_base = f"s={fg_w}x{fg_h}:fps={FPS}:d={frames}"
         z = zoom_range
         step = (z - 1.0) / frames
 
-        # 효과별 zoompan (전경 전용)
         if "zoom_in" in effect:
             z_expr = f"1+{step:.8f}*on"
         elif "zoom_out" in effect:
@@ -218,7 +214,9 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
             x_expr = "iw/2-(iw/zoom/2)"
             y_expr = "ih/2-(ih/zoom/2)"
 
-        fg_zoompan = f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':{zp_base}{speed_filter}"
+        fg_zoompan = (
+            f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':{zp_base}{speed_filter}"
+        )
 
         main_filter = (
             f"[0:v]split=2[bg_in][fg_in];"
