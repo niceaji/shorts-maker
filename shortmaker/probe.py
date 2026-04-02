@@ -46,4 +46,16 @@ def get_video_info(filepath: Path) -> dict | None:
         s.get("codec_type") == "audio" for s in data.get("streams", [])
     )
 
-    return {"duration": duration, "has_audio": has_audio}
+    width = None
+    height = None
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") == "video":
+            width = stream.get("width")
+            height = stream.get("height")
+            if width is not None:
+                width = int(width)
+            if height is not None:
+                height = int(height)
+            break
+
+    return {"duration": duration, "has_audio": has_audio, "width": width, "height": height}

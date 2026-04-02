@@ -167,8 +167,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(args) -> None:
     """실제 작업 수행 (서브커맨드에서도 호출됨)"""
-    src = Path(args.src).expanduser()
-    out = Path(args.out).expanduser()
+    src = Path(args.src)
+    out = Path(args.out)
 
     # --src를 직접 지정한 경우 날짜 필터 무시
     src_explicitly_set = args.src != "/Volumes/SD_Card/DCIM"

@@ -261,7 +261,8 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
 def concat_with_transition(segment_files, output_path, tmp_dir, transition,
                            title=None, font_path=None, font_color="white",
                            bgm=None, bgm_volume=0.3, bgm_fade=1.5,
-                           total_duration=None, fill=False, zoom=1.1,
+                           bgm_loop=True, total_duration=None, fill=False,
+                           zoom=1.1,
                            watermark=None, watermark_position="bottom_right",
                            watermark_color="white", watermark_opacity=0.7,
                            intro=None, outro=None):
@@ -296,7 +297,7 @@ def concat_with_transition(segment_files, output_path, tmp_dir, transition,
             segment_files, output_path, tmp_dir,
             title_png=title_png,
             bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
-            total_duration=total_duration,
+            bgm_loop=bgm_loop, total_duration=total_duration,
             intro=intro, outro=outro,
             watermark_png=watermark_png,
         )
@@ -344,7 +345,10 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
         watermark_idx = None
 
     if bgm:
-        extra_inputs.append(("-i", str(bgm)))
+        if bgm_loop:
+            extra_inputs.append(("-stream_loop", "-1", "-i", str(bgm)))
+        else:
+            extra_inputs.append(("-i", str(bgm)))
         bgm_idx = input_idx
         input_idx += 1
     else:
@@ -423,7 +427,7 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
             f"[{bgm_idx}:a]volume={bgm_volume},"
             f"afade=t=in:st=0:d={bgm_fade},"
             f"afade=t=out:st={fade_out_start}:d={bgm_fade}[bgm];"
-            f"{ax_label}[bgm]amix=inputs=2:duration=shortest:dropout_transition=0[aout]"
+            f"{ax_label}[bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]"
         )
         afinal_label = "[aout]"
     else:
@@ -441,7 +445,7 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
             segment_files, output_path, tmp_dir,
             title_png=title_png,
             bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
-            total_duration=total_duration,
+            bgm_loop=bgm_loop, total_duration=total_duration,
             intro=intro, outro=outro,
             watermark_png=watermark_png,
         )
@@ -538,7 +542,7 @@ def build_parser():
 
 def run(args):
     """실제 작업 수행 (서브커맨드에서도 호출됨)"""
-    output_path = Path(args.out).expanduser()
+    output_path = Path(args.out)
     font_path = resolve_font_path(args)
 
     print("=== 이미지 숏폼 영상 생성기 ===")
@@ -569,7 +573,9 @@ def run(args):
     print()
 
     # 이미지 검색
-    images = find_media_files(Path(args.src).expanduser(), args.ext, recursive=False)
+    src_explicitly_set = args.src != "/Volumes/SD_Card/DCIM"
+    date_str = None if src_explicitly_set else getattr(args, "date", None)
+    images = find_media_files(Path(args.src), args.ext, date_str=date_str, recursive=False)
     if not images:
         ext_list = ", ".join(f"*.{e}" for e in args.ext)
         print(f"오류: {args.src} 에서 이미지 파일을 찾을 수 없습니다. ({ext_list})")
@@ -656,6 +662,7 @@ def run(args):
                 transition=0,
                 title=args.title, font_path=font_path, font_color=args.font_color,
                 bgm=args.bgm, bgm_volume=args.bgm_volume, bgm_fade=args.bgm_fade,
+                bgm_loop=args.bgm_loop,
                 total_duration=total_duration, fill=args.fill, zoom=args.zoom,
                 watermark=args.watermark,
                 watermark_position=args.watermark_position,
@@ -670,6 +677,7 @@ def run(args):
                 transition=args.transition,
                 title=args.title, font_path=font_path, font_color=args.font_color,
                 bgm=args.bgm, bgm_volume=args.bgm_volume, bgm_fade=args.bgm_fade,
+                bgm_loop=args.bgm_loop,
                 total_duration=total_duration, fill=args.fill, zoom=args.zoom,
                 watermark=args.watermark,
                 watermark_position=args.watermark_position,

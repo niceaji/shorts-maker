@@ -14,6 +14,7 @@ from shortmaker.cli import (
     add_bgm_args,
     add_display_args,
     add_intro_outro_args,
+    add_ratio_args,
     add_speed_args,
     add_subtitle_args,
     add_title_args,
@@ -93,6 +94,7 @@ def _build_clip_parser(subparsers):
 
     # 화면/영상 옵션
     add_display_args(p)
+    add_ratio_args(p)
 
     # 속도/오디오 옵션
     add_speed_args(p)
@@ -114,6 +116,8 @@ def _build_clip_parser(subparsers):
 
 def _build_image_parser(subparsers):
     """이미지 숏폼 서브커맨드 파서를 생성한다."""
+    from datetime import datetime
+
     p = subparsers.add_parser(
         "image",
         help="이미지에서 숏폼 생성",
@@ -130,9 +134,14 @@ def _build_image_parser(subparsers):
     # 소스 옵션
     src_group = p.add_argument_group("소스 옵션")
     src_group.add_argument(
+        "--date", "-d",
+        default=datetime.now().strftime("%Y%m%d"),
+        help="파일명에서 매칭할 날짜 YYYYMMDD (기본: 오늘)",
+    )
+    src_group.add_argument(
         "--src", "-s",
-        required=True,
-        help="이미지 소스 디렉토리 (필수)",
+        default="/Volumes/SD_Card/DCIM",
+        help="이미지 소스 디렉토리 (기본: /Volumes/SD_Card/DCIM)",
     )
     src_group.add_argument(
         "--ext", "-e",
@@ -187,6 +196,7 @@ def _build_image_parser(subparsers):
     add_subtitle_args(p)
     add_bgm_args(p)
     add_display_args(p)
+    add_ratio_args(p)
     add_speed_args(p)
     add_audio_args(p)
     add_watermark_args(p)
@@ -256,6 +266,8 @@ def _build_frames_parser(subparsers):
 
 def _build_contact_parser(subparsers):
     """컨택트 시트 서브커맨드 파서를 생성한다."""
+    from datetime import datetime
+
     p = subparsers.add_parser(
         "contact",
         help="컨택트 시트(썸네일 그리드) 생성",
@@ -271,8 +283,11 @@ def _build_contact_parser(subparsers):
 
     # 기본 옵션
     basic = p.add_argument_group("기본 옵션")
-    basic.add_argument("--src", "-s", required=True, metavar="디렉토리",
-                       help="소스 디렉토리 경로 (필수)")
+    basic.add_argument("--date", "-d",
+                       default=datetime.now().strftime("%Y%m%d"),
+                       help="파일명에서 매칭할 날짜 YYYYMMDD (기본: 오늘)")
+    basic.add_argument("--src", "-s", default="/Volumes/SD_Card/DCIM", metavar="디렉토리",
+                       help="소스 디렉토리 경로 (기본: /Volumes/SD_Card/DCIM)")
     basic.add_argument("--out", "-o", default="./contact_sheet.jpg", metavar="파일",
                        help="출력 파일 경로 (기본: ./contact_sheet.jpg)")
     basic.add_argument("--ext", "-e", nargs="+",
@@ -305,6 +320,100 @@ def _build_contact_parser(subparsers):
     return p
 
 
+def _build_sharp_parser(subparsers):
+    """흐린 이미지 필터 서브커맨드 파서를 생성한다."""
+    from datetime import datetime
+
+    p = subparsers.add_parser(
+        "sharp",
+        help="흐린 이미지 필터링 (선명한 것만 남기기)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""예시:
+  shorts sharp -s ./img                    # 기본 (임계값 100)
+  shorts sharp -s ./img --threshold 50     # 관대한 필터
+  shorts sharp -s ./img --dry-run          # 복사 없이 결과만 확인
+  shorts sharp -d 20260401                 # 특정 날짜""",
+    )
+
+    p.add_argument("--date", "-d",
+                   default=datetime.now().strftime("%Y%m%d"),
+                   help="파일명에서 매칭할 날짜 YYYYMMDD (기본: 오늘)")
+    p.add_argument("--src", "-s",
+                   default="/Volumes/SD_Card/DCIM",
+                   help="소스 디렉토리 (기본: /Volumes/SD_Card/DCIM)")
+    p.add_argument("--ext", "-e",
+                   nargs="+",
+                   default=["jpg", "png", "jpeg", "webp", "heic"],
+                   help="이미지 파일 확장자들 (기본: jpg png jpeg webp heic)")
+    p.add_argument("--out", "-o",
+                   default="./sharp",
+                   help="출력 디렉토리 (기본: ./sharp)")
+    p.add_argument("--threshold",
+                   type=float,
+                   default=100.0,
+                   help="선명도 임계값 (기본: 100.0, 낮을수록 관대)")
+    p.add_argument("--dry-run",
+                   action="store_true",
+                   default=False,
+                   help="복사 없이 결과만 표시")
+
+    return p
+
+
+def _build_highlight_parser(subparsers):
+    """하이라이트 릴 서브커맨드 파서를 생성한다."""
+    p = subparsers.add_parser(
+        "highlight",
+        help="단일 영상에서 하이라이트 릴 생성",
+        fromfile_prefix_chars="@",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""예시:
+  shorts highlight -i video.mp4                    # 기본 (1초씩, 원본 비율)
+  shorts highlight -i video.mp4 -t 2.0 -n 10      # 2초씩 10개
+  shorts highlight -i video.mp4 --ratio 9:16       # 쇼츠 비율
+  shorts highlight -i video.mp4 --bgm music.mp3    # BGM 추가
+  shorts highlight -i video.mp4 --shuffle          # 랜덤 순서""",
+    )
+
+    # 소스/출력
+    src = p.add_argument_group("소스/출력")
+    src.add_argument("--input", "-i", required=True,
+                     help="소스 영상 파일 경로 (필수)")
+    src.add_argument("--out", "-o", default="./highlight.mp4",
+                     help="출력 파일 경로 (기본: ./highlight.mp4)")
+
+    # 세그먼트 설정
+    seg = p.add_argument_group("세그먼트 설정")
+    seg.add_argument("--duration", "-t", type=float, default=1.0,
+                     help="각 세그먼트 길이 (초, 기본: 1.0)")
+    seg.add_argument("--count", "-n", type=int, default=None,
+                     help="세그먼트 개수 (기본: 자동)")
+    seg.add_argument("--shuffle", action="store_true", default=False,
+                     help="세그먼트 순서 랜덤 (기본: 꺼짐)")
+    seg.add_argument("--transition", type=float, default=0,
+                     help="세그먼트 간 크로스페이드 길이 (초, 기본: 0)")
+
+    # 스마트 분석
+    smart = p.add_argument_group("스마트 분석")
+    smart.add_argument("--smart", action="store_true", default=False,
+                       help="움직임+소리 분석으로 하이라이트 자동 선택 (기본: 균등 간격)")
+    smart.add_argument("--interval", type=float, default=0.5,
+                       help="분석 샘플링 간격 (초, 클수록 빠름, 기본: 0.5)")
+    smart.add_argument("--no-audio-score", dest="no_audio_score", action="store_true",
+                       default=False,
+                       help="오디오 무시, 움직임만으로 분석 (바람소리 등 환경 소음이 심할 때)")
+
+    # 화면/영상 옵션
+    add_ratio_args(p, default="original")
+    add_display_args(p)
+    add_speed_args(p)
+    add_audio_args(p)
+    add_title_args(p)
+    add_bgm_args(p)
+
+    return p
+
+
 def main():
     """통합 CLI 진입점"""
     parser = argparse.ArgumentParser(
@@ -316,12 +425,15 @@ def main():
   image    이미지에서 숏폼 생성
   frames   영상에서 랜덤 프레임 추출
   contact  컨택트 시트(썸네일 그리드) 생성
+  sharp    흐린 이미지 필터링 (선명한 것만 남기기)
 
 예시:
   shorts clip                    # 영상 숏폼 (기본)
   shorts image -s ./img          # 이미지 숏폼
   shorts frames -d 20260318      # 프레임 추출
   shorts contact -s ./img        # 컨택시트
+  shorts sharp -s ./img          # 선명도 필터
+  shorts highlight -i video.mp4  # 하이라이트 릴
   shorts clip @preset.txt        # 프리셋 파일""",
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -330,30 +442,56 @@ def main():
     _build_image_parser(subparsers)
     _build_frames_parser(subparsers)
     _build_contact_parser(subparsers)
+    _build_sharp_parser(subparsers)
+    _build_highlight_parser(subparsers)
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args()
+
+    # 경로 인자 틸드(~) 확장
+    for attr in ("src", "out", "bgm", "intro", "outro", "watermark", "font", "input"):
+        val = getattr(args, attr, None)
+        if val:
+            setattr(args, attr, str(Path(val).expanduser()))
 
     if args.command is None:
         parser.print_help()
         return
 
-    # 스크립트들이 프로젝트 루트에 있으므로 import 경로 추가
-    project_root = str(Path(__file__).parent.parent)
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
+    # 입력 파일/디렉토리 존재 여부 조기 검증
+    _FILE_ARGS = ("bgm", "intro", "outro", "font", "input")
+    _DIR_ARGS = ("src",)
+    errors = []
+    for attr in _FILE_ARGS:
+        val = getattr(args, attr, None)
+        if val and not Path(val).exists():
+            errors.append(f"파일을 찾을 수 없습니다: {val}")
+    for attr in _DIR_ARGS:
+        val = getattr(args, attr, None)
+        if val and not Path(val).is_dir():
+            errors.append(f"디렉토리를 찾을 수 없습니다: {val}")
+    if errors:
+        for e in errors:
+            print(f"오류: {e}", file=sys.stderr)
+        sys.exit(1)
 
     if args.command == "clip":
-        from make_shorts import run
+        from shortmaker.clip import run
         run(args)
     elif args.command == "image":
-        from make_image_shorts import run
+        from shortmaker.image import run
         run(args)
     elif args.command == "frames":
-        from extract_frames import run
+        from shortmaker.frames import run
         run(args)
     elif args.command == "contact":
-        from make_contact_sheet import run
+        from shortmaker.contact import run
+        run(args)
+    elif args.command == "sharp":
+        from shortmaker.sharp import run
+        run(args)
+    elif args.command == "highlight":
+        from shortmaker.highlight import run
         run(args)
     else:
         parser.print_help()

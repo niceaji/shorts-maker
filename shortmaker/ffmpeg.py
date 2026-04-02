@@ -33,7 +33,7 @@ def build_bgm_filter(bgm_idx: int, volume: float, fade: float, total_duration: f
         f"[{bgm_idx}:a]volume={volume},"
         f"afade=t=in:st=0:d={fade},"
         f"afade=t=out:st={fade_out_start}:d={fade}[bgm];"
-        f"[0:a][bgm]amix=inputs=2:duration=shortest:dropout_transition=0[aout]"
+        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]"
     )
 
 
@@ -161,7 +161,7 @@ def _convert_intro_outro(file_path, label, width, height, tmp_dir):
 
 def concat_segments(segment_files, output_path, tmp_dir, *,
                     title_png=None, bgm=None, bgm_volume=0.3, bgm_fade=1.5,
-                    total_duration=None, intro=None, outro=None,
+                    bgm_loop=True, total_duration=None, intro=None, outro=None,
                     watermark_png=None):
     """concat demuxer로 세그먼트를 합친다.
 
@@ -230,6 +230,8 @@ def concat_segments(segment_files, output_path, tmp_dir, *,
 
     # BGM
     if bgm:
+        if bgm_loop:
+            cmd += ["-stream_loop", "-1"]
         cmd += ["-i", str(bgm)]
         af_parts.append(build_bgm_filter(input_idx, bgm_volume, bgm_fade, adjusted_duration or 30))
         input_idx += 1

@@ -30,6 +30,9 @@ def add_bgm_args(parser):
                         help="배경음악 볼륨 (0.0~1.0, 기본: 0.3)")
     parser.add_argument("--bgm-fade", type=float, default=1.5,
                         help="배경음악 페이드인/아웃 길이 (초, 기본: 1.5)")
+    parser.add_argument("--no-bgm-loop", dest="bgm_loop", action="store_false",
+                        default=True,
+                        help="BGM 반복 끄기 (기본: 영상 길이만큼 반복)")
 
 
 def add_display_args(parser):
@@ -43,6 +46,13 @@ def add_display_args(parser):
                                default=True, help="아이폰 스타일 색보정 적용 (기본: 켜짐)")
     enhance_group.add_argument("--no-enhance", dest="enhance", action="store_false",
                                help="색보정 끄기")
+
+
+def add_ratio_args(parser, default="9:16"):
+    """영상 비율 인자: --ratio"""
+    parser.add_argument("--ratio", default=default,
+                        choices=["original", "9:16", "16:9", "1:1"],
+                        help=f"영상 비율 (기본: {default})")
 
 
 def add_speed_args(parser):

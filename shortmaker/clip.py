@@ -201,7 +201,7 @@ def extract_segment(clip_path, start, duration, out_path, vf, has_audio,
 
 def _concat_xfade(segment_files, output_path, tmp_dir, transition,
                   title_png, bgm, bgm_volume, bgm_fade, total_duration,
-                  watermark_png=None):
+                  watermark_png=None, bgm_loop=True):
     """xfade 필터로 세그먼트 간 크로스페이드 전환 효과를 적용한다."""
     n = len(segment_files)
 
@@ -228,7 +228,10 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
         watermark_idx = None
 
     if bgm:
-        extra_inputs.append(("-i", str(bgm)))
+        if bgm_loop:
+            extra_inputs.append(("-stream_loop", "-1", "-i", str(bgm)))
+        else:
+            extra_inputs.append(("-i", str(bgm)))
         bgm_idx = input_idx
         input_idx += 1
     else:
@@ -300,7 +303,7 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
             f"[{bgm_idx}:a]volume={bgm_volume},"
             f"afade=t=in:st=0:d={bgm_fade},"
             f"afade=t=out:st={fade_out_start}:d={bgm_fade}[bgm];"
-            f"{ax_label}[bgm]amix=inputs=2:duration=shortest:dropout_transition=0[aout]"
+            f"{ax_label}[bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]"
         )
         afinal_label = "[aout]"
     else:
@@ -317,7 +320,7 @@ def _concat_xfade(segment_files, output_path, tmp_dir, transition,
             segment_files, output_path, tmp_dir,
             title_png=title_png,
             bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
-            total_duration=total_duration,
+            bgm_loop=bgm_loop, total_duration=total_duration,
         )
         if not ok:
             print("  합치기 실패 (demuxer):")
@@ -424,7 +427,7 @@ def run(args):
     src_explicitly_set = args.src != "/Volumes/SD_Card/DCIM"
     date_str = None if src_explicitly_set else args.date
     output_path = args.out or f"./shorts_{args.date}.mp4"
-    output_path = Path(output_path).expanduser()
+    output_path = Path(output_path)
 
     print(f"날짜 필터: {date_str or '전체 (소스 폴더 직접 지정)'}")
     print(f"소스: {args.src}")
@@ -441,7 +444,7 @@ def run(args):
     print()
 
     # 클립 검색
-    clips = find_media_files(Path(args.src).expanduser(), args.ext, date_str=date_str)
+    clips = find_media_files(Path(args.src), args.ext, date_str=date_str)
     if not clips:
         ext_patterns = ", ".join(f"*.{ext}" for ext in args.ext)
         if date_str:
@@ -583,7 +586,7 @@ def run(args):
                     transition=args.transition,
                     title_png=title_png,
                     bgm=args.bgm, bgm_volume=args.bgm_volume, bgm_fade=args.bgm_fade,
-                    total_duration=sum_duration,
+                    bgm_loop=args.bgm_loop, total_duration=sum_duration,
                     watermark_png=watermark_png,
                 )
             else:
@@ -591,7 +594,7 @@ def run(args):
                     segment_files, output_path, tmp_dir,
                     title_png=title_png,
                     bgm=args.bgm, bgm_volume=args.bgm_volume,
-                    bgm_fade=args.bgm_fade,
+                    bgm_fade=args.bgm_fade, bgm_loop=args.bgm_loop,
                     total_duration=sum_duration,
                     intro=intro_seg,
                     outro=outro_seg,

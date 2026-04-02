@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-detect = ["opencv-python-headless"]
+detect = ["opencv-python-headless", "numpy"]
 
 [project.scripts]
 shorts = "shortmaker.main:main"

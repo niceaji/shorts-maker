@@ -129,14 +129,16 @@ def build_contact_sheet(args: argparse.Namespace) -> None:
     Args:
         args: argparse 파싱 결과
     """
-    src = Path(args.src).expanduser()
+    src = Path(args.src)
     if not src.is_dir():
         print(f"오류: 소스 디렉토리를 찾을 수 없습니다 — {src}", file=sys.stderr)
         sys.exit(1)
 
     # 파일 검색
     print(f"파일 검색 중: {src}")
-    files = find_media_files(src, exts=args.ext, recursive=False)
+    src_explicitly_set = str(src) != "/Volumes/SD_Card/DCIM"
+    date_str = None if src_explicitly_set else getattr(args, "date", None)
+    files = find_media_files(src, exts=args.ext, date_str=date_str, recursive=False)
     if not files:
         print(f"오류: 지원 확장자({', '.join(args.ext)})에 해당하는 파일이 없습니다.", file=sys.stderr)
         sys.exit(1)
@@ -149,7 +151,7 @@ def build_contact_sheet(args: argparse.Namespace) -> None:
     font_color = font_rgba[:3]
 
     # 폰트 경로 결정
-    font_path = args.font or str(Path(__file__).parent / DEFAULT_FONT)
+    font_path = args.font or str(Path(__file__).parent.parent / DEFAULT_FONT)
 
     # 썸네일 크기 (16:9 고정)
     thumb_w = args.thumb_width
@@ -226,7 +228,7 @@ def build_contact_sheet(args: argparse.Namespace) -> None:
             draw.text((x, label_y), label_text, font=label_font, fill=font_color)
 
     # 저장
-    out_path = Path(args.out).expanduser()
+    out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(str(out_path), "JPEG", quality=92)
 
