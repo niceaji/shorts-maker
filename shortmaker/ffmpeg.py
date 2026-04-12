@@ -23,17 +23,21 @@ def build_enhance_chain(enhance: bool) -> str:
     return f",{ENHANCE_FILTER}" if enhance else ""
 
 
-def build_bgm_filter(bgm_idx: int, volume: float, fade: float, total_duration: float) -> str:
+def build_bgm_filter(bgm_idx: int, volume: float, fade: float, total_duration: float,
+                     bgm_start: float = 0.0, audio_label: str = "[0:a]") -> str:
     """BGM 오디오 필터 체인 문자열을 반환한다.
 
     볼륨 조절 + 페이드인 + 페이드아웃 + 원본 오디오와 믹싱
+    bgm_start > 0이면 atrim으로 시작 지점을 건너뛴다.
+    audio_label: 원본 오디오 스트림 레이블 (xfade 시 "[ax]" 등)
     """
     fade_out_start = max(0, total_duration - fade)
+    trim_part = f"atrim=start={bgm_start},asetpts=PTS-STARTPTS," if bgm_start > 0 else ""
     return (
-        f"[{bgm_idx}:a]volume={volume},"
+        f"[{bgm_idx}:a]{trim_part}volume={volume},"
         f"afade=t=in:st=0:d={fade},"
         f"afade=t=out:st={fade_out_start}:d={fade}[bgm];"
-        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]"
+        f"{audio_label}[bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]"
     )
 
 
@@ -161,8 +165,8 @@ def _convert_intro_outro(file_path, label, width, height, tmp_dir):
 
 def concat_segments(segment_files, output_path, tmp_dir, *,
                     title_png=None, bgm=None, bgm_volume=0.3, bgm_fade=1.5,
-                    bgm_loop=True, total_duration=None, intro=None, outro=None,
-                    watermark_png=None):
+                    bgm_start=0.0, bgm_loop=True, total_duration=None,
+                    intro=None, outro=None, watermark_png=None):
     """concat demuxer로 세그먼트를 합친다.
 
     제목 오버레이(페이드인)와 BGM 믹싱을 선택적으로 적용.
@@ -233,7 +237,7 @@ def concat_segments(segment_files, output_path, tmp_dir, *,
         if bgm_loop:
             cmd += ["-stream_loop", "-1"]
         cmd += ["-i", str(bgm)]
-        af_parts.append(build_bgm_filter(input_idx, bgm_volume, bgm_fade, adjusted_duration or 30))
+        af_parts.append(build_bgm_filter(input_idx, bgm_volume, bgm_fade, adjusted_duration or 30, bgm_start))
         input_idx += 1
 
     # filter_complex 조합
@@ -255,3 +259,142 @@ def concat_segments(segment_files, output_path, tmp_dir, *,
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     return result.returncode == 0, result.stderr
+
+
+def concat_xfade(segment_files, output_path, tmp_dir, transition,
+                 title_png=None, bgm=None, bgm_volume=0.3, bgm_fade=1.5,
+                 total_duration=None, watermark_png=None, bgm_loop=True,
+                 bgm_start=0.0, intro=None, outro=None):
+    """xfade 필터로 세그먼트 간 크로스페이드 전환 효과를 적용한다.
+
+    실패 시 concat demuxer로 자동 폴백한다.
+    """
+    import sys
+
+    # 인트로/아웃트로를 세그먼트 목록에 포함
+    all_segments = []
+    if intro is not None:
+        all_segments.append(intro)
+    all_segments.extend(segment_files)
+    if outro is not None:
+        all_segments.append(outro)
+
+    n = len(all_segments)
+
+    cmd = ["ffmpeg", "-y"]
+    for seg in all_segments:
+        cmd += ["-i", str(seg)]
+
+    input_idx = n
+    extra_inputs = []
+
+    if title_png:
+        extra_inputs.append(("-loop", "1", "-i", title_png))
+        title_idx = input_idx
+        input_idx += 1
+    else:
+        title_idx = None
+
+    if watermark_png:
+        extra_inputs.append(("-loop", "1", "-i", watermark_png))
+        watermark_idx = input_idx
+        input_idx += 1
+    else:
+        watermark_idx = None
+
+    if bgm:
+        if bgm_loop:
+            extra_inputs.append(("-stream_loop", "-1", "-i", str(bgm)))
+        else:
+            extra_inputs.append(("-i", str(bgm)))
+        bgm_idx = input_idx
+        input_idx += 1
+    else:
+        bgm_idx = None
+
+    for args_tuple in extra_inputs:
+        cmd += list(args_tuple)
+
+    # filter_complex 구성
+    fc_parts = []
+    seg_dur = (total_duration / n) if total_duration else 3.0
+    offset = seg_dur - transition
+
+    if n == 2:
+        fc_parts.append(
+            f"[0:v][1:v]xfade=transition=fade:duration={transition}:offset={offset:.3f}[vx]"
+        )
+        vx_label = "[vx]"
+        fc_parts.append(f"[0:a][1:a]acrossfade=d={transition}[ax]")
+        ax_label = "[ax]"
+    else:
+        prev_v = "[0:v]"
+        for i in range(1, n):
+            cur_off = seg_dur * i - transition * i
+            if cur_off < 0:
+                cur_off = 0
+            out_label = f"[vx{i}]" if i < n - 1 else "[vx]"
+            fc_parts.append(
+                f"{prev_v}[{i}:v]xfade=transition=fade:duration={transition}:offset={cur_off:.3f}{out_label}"
+            )
+            prev_v = out_label
+        vx_label = "[vx]"
+
+        prev_a = "[0:a]"
+        for i in range(1, n):
+            out_label = f"[ax{i}]" if i < n - 1 else "[ax]"
+            fc_parts.append(
+                f"{prev_a}[{i}:a]acrossfade=d={transition}{out_label}"
+            )
+            prev_a = out_label
+        ax_label = "[ax]"
+
+    # 제목 오버레이 (페이드인)
+    if title_idx is not None:
+        fc_parts.append(
+            f"[{title_idx}:v]format=rgba,fade=t=in:st=0:d=1:alpha=1[title];"
+            f"{vx_label}[title]overlay=0:0:shortest=1[vafter_title]"
+        )
+        vx_label = "[vafter_title]"
+
+    # 워터마크 오버레이 (페이드 없이 고정)
+    if watermark_idx is not None:
+        fc_parts.append(
+            f"[{watermark_idx}:v]format=rgba[wm];"
+            f"{vx_label}[wm]overlay=0:0:shortest=1[vfinal]"
+        )
+        vfinal_label = "[vfinal]"
+    else:
+        vfinal_label = vx_label
+
+    # BGM 믹싱
+    if bgm_idx is not None:
+        fc_parts.append(build_bgm_filter(
+            bgm_idx, bgm_volume, bgm_fade, total_duration or 30,
+            bgm_start=bgm_start, audio_label=ax_label,
+        ))
+        afinal_label = "[aout]"
+    else:
+        afinal_label = ax_label
+
+    cmd += ["-filter_complex", ";".join(fc_parts)]
+    cmd += ["-map", vfinal_label, "-map", afinal_label]
+    cmd += ENCODER_VIDEO + ENCODER_AUDIO + ["-movflags", "+faststart", str(output_path)]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        print("  합치기 실패 (xfade). concat demuxer로 재시도합니다...")
+        ok, stderr = concat_segments(
+            segment_files, output_path, tmp_dir,
+            title_png=title_png,
+            bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
+            bgm_start=bgm_start, bgm_loop=bgm_loop,
+            total_duration=total_duration,
+            intro=intro, outro=outro,
+            watermark_png=watermark_png,
+        )
+        if not ok:
+            print("  합치기 실패 (demuxer):")
+            for line in stderr.strip().splitlines()[-5:]:
+                print(f"    {line}")
+            sys.exit(1)

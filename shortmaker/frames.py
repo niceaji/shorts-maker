@@ -127,15 +127,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--date", "-d",
-        default=today,
+        default=None,
         metavar="YYYYMMDD",
         help=f"파일명에서 매칭할 날짜 (기본: {today})",
     )
     parser.add_argument(
         "--src", "-s",
-        default="/Volumes/SD_Card/DCIM",
+        default=None,
         metavar="DIR",
-        help="영상 소스 디렉토리 (기본: /Volumes/SD_Card/DCIM)",
+        help="영상 소스 디렉토리 (필수)",
     )
     parser.add_argument(
         "--out", "-o",
@@ -171,8 +171,7 @@ def run(args) -> None:
     out = Path(args.out)
 
     # --src를 직접 지정한 경우 날짜 필터 무시
-    src_explicitly_set = args.src != "/Volumes/SD_Card/DCIM"
-    date_str = None if src_explicitly_set else args.date
+    date_str = args.date
 
     if not src.exists():
         print(f"오류: 소스 디렉토리가 존재하지 않습니다: {src}", file=sys.stderr)
@@ -232,4 +231,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n  작업이 중지되었습니다.\n")
+        sys.exit(130)

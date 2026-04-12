@@ -35,7 +35,7 @@ def _build_clip_parser(subparsers):
         epilog="""예시:
   shorts clip                              # SD카드, 오늘 날짜
   shorts clip -d 20260318                  # 특정 날짜
-  shorts clip -s ./clips --fill            # 로컬 폴더, 전체 채우기
+  shorts clip -s ./clips --blur-bg         # 블러 배경 모드
   shorts clip @preset.txt                  # 프리셋 파일
   shorts clip --bgm music.mp3 --mute      # BGM만 사용
   shorts clip --title "제주" --watermark "2026.03.28" """,
@@ -45,13 +45,13 @@ def _build_clip_parser(subparsers):
     src_group = p.add_argument_group("소스 옵션")
     src_group.add_argument(
         "--date", "-d",
-        default=today,
-        help="파일명에서 매칭할 날짜 YYYYMMDD (기본: 오늘)",
+        default=None,
+        help="파일명에서 매칭할 날짜 YYYYMMDD (미지정 시 전체)",
     )
     src_group.add_argument(
         "--src", "-s",
-        default="/Volumes/SD_Card/DCIM",
-        help="영상 클립 소스 디렉토리 (기본: /Volumes/SD_Card/DCIM)",
+        default=None,
+        help="영상 클립 소스 디렉토리 (필수)",
     )
     src_group.add_argument(
         "--ext", "-e",
@@ -71,7 +71,7 @@ def _build_clip_parser(subparsers):
         "--duration", "-t",
         type=float,
         default=2.5,
-        help="각 클립에서 잘라낼 길이 (초, 기본: 2.5)",
+        help="각 클립에서 잘라낼 길이 (초, 기본: 2.5, 0=전체)",
     )
     out_group.add_argument(
         "--shuffle",
@@ -135,13 +135,13 @@ def _build_image_parser(subparsers):
     src_group = p.add_argument_group("소스 옵션")
     src_group.add_argument(
         "--date", "-d",
-        default=datetime.now().strftime("%Y%m%d"),
-        help="파일명에서 매칭할 날짜 YYYYMMDD (기본: 오늘)",
+        default=None,
+        help="파일명에서 매칭할 날짜 YYYYMMDD (미지정 시 전체)",
     )
     src_group.add_argument(
         "--src", "-s",
-        default="/Volumes/SD_Card/DCIM",
-        help="이미지 소스 디렉토리 (기본: /Volumes/SD_Card/DCIM)",
+        default=None,
+        help="이미지 소스 디렉토리 (필수)",
     )
     src_group.add_argument(
         "--ext", "-e",
@@ -225,15 +225,15 @@ def _build_frames_parser(subparsers):
 
     p.add_argument(
         "--date", "-d",
-        default=today,
+        default=None,
         metavar="YYYYMMDD",
         help=f"파일명에서 매칭할 날짜 (기본: {today})",
     )
     p.add_argument(
         "--src", "-s",
-        default="/Volumes/SD_Card/DCIM",
+        default=None,
         metavar="DIR",
-        help="영상 소스 디렉토리 (기본: /Volumes/SD_Card/DCIM)",
+        help="영상 소스 디렉토리 (필수)",
     )
     p.add_argument(
         "--out", "-o",
@@ -284,10 +284,10 @@ def _build_contact_parser(subparsers):
     # 기본 옵션
     basic = p.add_argument_group("기본 옵션")
     basic.add_argument("--date", "-d",
-                       default=datetime.now().strftime("%Y%m%d"),
-                       help="파일명에서 매칭할 날짜 YYYYMMDD (기본: 오늘)")
-    basic.add_argument("--src", "-s", default="/Volumes/SD_Card/DCIM", metavar="디렉토리",
-                       help="소스 디렉토리 경로 (기본: /Volumes/SD_Card/DCIM)")
+                       default=None,
+                       help="파일명에서 매칭할 날짜 YYYYMMDD (미지정 시 전체)")
+    basic.add_argument("--src", "-s", default=None, metavar="디렉토리",
+                       help="소스 디렉토리 경로 (필수)")
     basic.add_argument("--out", "-o", default="./contact_sheet.jpg", metavar="파일",
                        help="출력 파일 경로 (기본: ./contact_sheet.jpg)")
     basic.add_argument("--ext", "-e", nargs="+",
@@ -336,11 +336,11 @@ def _build_sharp_parser(subparsers):
     )
 
     p.add_argument("--date", "-d",
-                   default=datetime.now().strftime("%Y%m%d"),
-                   help="파일명에서 매칭할 날짜 YYYYMMDD (기본: 오늘)")
+                   default=None,
+                   help="파일명에서 매칭할 날짜 YYYYMMDD (미지정 시 전체)")
     p.add_argument("--src", "-s",
-                   default="/Volumes/SD_Card/DCIM",
-                   help="소스 디렉토리 (기본: /Volumes/SD_Card/DCIM)")
+                   default=None,
+                   help="소스 디렉토리 (필수)")
     p.add_argument("--ext", "-e",
                    nargs="+",
                    default=["jpg", "png", "jpeg", "webp", "heic"],
@@ -377,7 +377,7 @@ def _build_highlight_parser(subparsers):
 
     # 소스/출력
     src = p.add_argument_group("소스/출력")
-    src.add_argument("--input", "-i", required=True,
+    src.add_argument("--input", "-i", default=None,
                      help="소스 영상 파일 경로 (필수)")
     src.add_argument("--out", "-o", default="./highlight.mp4",
                      help="출력 파일 경로 (기본: ./highlight.mp4)")
@@ -414,9 +414,26 @@ def _build_highlight_parser(subparsers):
     return p
 
 
+class _FriendlyParser(argparse.ArgumentParser):
+    """인자 오류 시 친절한 메시지를 출력하는 파서"""
+
+    def error(self, message):
+        print(f"\n  오류: {message}\n", file=sys.stderr)
+        self.print_usage(sys.stderr)
+        sys.exit(2)
+
+
 def main():
     """통합 CLI 진입점"""
-    parser = argparse.ArgumentParser(
+    try:
+        _run()
+    except KeyboardInterrupt:
+        print("\n\n  작업이 중지되었습니다.\n")
+        sys.exit(130)
+
+
+def _run():
+    parser = _FriendlyParser(
         prog="shorts",
         description="DJI 영상/이미지에서 숏폼 영상을 생성합니다.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -438,12 +455,14 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    _build_clip_parser(subparsers)
-    _build_image_parser(subparsers)
-    _build_frames_parser(subparsers)
-    _build_contact_parser(subparsers)
-    _build_sharp_parser(subparsers)
-    _build_highlight_parser(subparsers)
+    sub = {
+        "clip": _build_clip_parser(subparsers),
+        "image": _build_image_parser(subparsers),
+        "frames": _build_frames_parser(subparsers),
+        "contact": _build_contact_parser(subparsers),
+        "sharp": _build_sharp_parser(subparsers),
+        "highlight": _build_highlight_parser(subparsers),
+    }
 
     argcomplete.autocomplete(parser)
     args = parser.parse_args()
@@ -456,6 +475,12 @@ def main():
 
     if args.command is None:
         parser.print_help()
+        return
+
+    # 소스 미지정 시 해당 서브커맨드 help 출력
+    src_attr = "input" if args.command == "highlight" else "src"
+    if getattr(args, src_attr, None) is None:
+        sub[args.command].print_help()
         return
 
     # 입력 파일/디렉토리 존재 여부 조기 검증

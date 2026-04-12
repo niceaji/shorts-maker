@@ -1,5 +1,6 @@
 """공통 CLI 인자 그룹 — argparse 인자 중복 제거"""
 
+import argparse
 from pathlib import Path
 from . import DEFAULT_FONT
 
@@ -30,17 +31,20 @@ def add_bgm_args(parser):
                         help="배경음악 볼륨 (0.0~1.0, 기본: 0.3)")
     parser.add_argument("--bgm-fade", type=float, default=1.5,
                         help="배경음악 페이드인/아웃 길이 (초, 기본: 1.5)")
+    parser.add_argument("--bgm-start", type=float, default=0.0,
+                        help="BGM 시작 지점 (초, 기본: 0.0)")
     parser.add_argument("--no-bgm-loop", dest="bgm_loop", action="store_false",
                         default=True,
                         help="BGM 반복 끄기 (기본: 영상 길이만큼 반복)")
 
 
 def add_display_args(parser):
-    """화면 표시 관련 인자 추가: --fill, --zoom, --enhance/--no-enhance"""
-    parser.add_argument("--fill", action="store_true", default=False,
-                        help="영상을 전체 화면에 꽉 채우기 (기본: 블러 배경 + 전경 중앙)")
-    parser.add_argument("--zoom", type=float, default=1.1,
-                        help="전경 영상 확대 배율; 1.0=딱맞춤, 1.1=살짝 확대 (기본: 1.1)")
+    """화면 표시 관련 인자 추가: --bg, --zoom, --enhance/--no-enhance"""
+    parser.add_argument("--bg", default="fill",
+                        choices=["fill", "blur", "letterbox"],
+                        help="배경 모드: fill=꽉채우기, blur=블러배경, letterbox=검정배경 (기본: fill)")
+    parser.add_argument("--zoom", type=float, default=1.0,
+                        help="전경 영상 확대 배율; 1.0=딱맞춤, 1.1=살짝 확대 (기본: 1.0)")
     enhance_group = parser.add_mutually_exclusive_group()
     enhance_group.add_argument("--enhance", dest="enhance", action="store_true",
                                default=True, help="아이폰 스타일 색보정 적용 (기본: 켜짐)")
@@ -48,7 +52,7 @@ def add_display_args(parser):
                                help="색보정 끄기")
 
 
-def add_ratio_args(parser, default="9:16"):
+def add_ratio_args(parser, default="original"):
     """영상 비율 인자: --ratio"""
     parser.add_argument("--ratio", default=default,
                         choices=["original", "9:16", "16:9", "1:1"],

@@ -42,8 +42,7 @@ def run(args) -> None:
         print(f"오류: 소스 디렉토리를 찾을 수 없습니다 — {src}", file=sys.stderr)
         sys.exit(1)
 
-    src_explicitly_set = args.src != "/Volumes/SD_Card/DCIM"
-    date_str = None if src_explicitly_set else getattr(args, "date", None)
+    date_str = getattr(args, "date", None)
     exts = getattr(args, "ext", ["jpg", "png", "jpeg", "webp", "heic"])
     threshold = getattr(args, "threshold", 100.0)
     out_dir = Path(args.out)
@@ -100,10 +99,10 @@ def main() -> None:
         prog="filter_sharp",
         description="Laplacian Variance로 흐린 이미지를 필터링합니다.",
     )
-    parser.add_argument("--date", "-d", default=today,
-                        help="파일명에서 매칭할 날짜 YYYYMMDD (기본: 오늘)")
-    parser.add_argument("--src", "-s", default="/Volumes/SD_Card/DCIM",
-                        help="소스 디렉토리 (기본: /Volumes/SD_Card/DCIM)")
+    parser.add_argument("--date", "-d", default=None,
+                        help="파일명에서 매칭할 날짜 YYYYMMDD (미지정 시 전체)")
+    parser.add_argument("--src", "-s", default=None,
+                        help="소스 디렉토리 (필수)")
     parser.add_argument("--ext", "-e", nargs="+",
                         default=["jpg", "png", "jpeg", "webp", "heic"],
                         help="이미지 파일 확장자들 (기본: jpg png jpeg webp heic)")
@@ -120,4 +119,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n  작업이 중지되었습니다.\n")
+        sys.exit(130)

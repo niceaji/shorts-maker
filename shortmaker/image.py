@@ -53,11 +53,11 @@ from shortmaker.cli import (
 from shortmaker.ffmpeg import (
     ENCODER_AUDIO,
     ENCODER_VIDEO,
-    build_bgm_filter,
     concat_segments,
+    concat_xfade,
     prepare_intro_outro,
 )
-from shortmaker.files import find_media_files
+from shortmaker.files import find_media_files, unique_path
 from shortmaker.overlay import (
     create_subtitle_overlay,
     create_title_overlay,
@@ -259,8 +259,8 @@ def process_image_segment(img_path, effect, duration, zoom_range, out_path,
 def concat_with_transition(segment_files, output_path, tmp_dir, transition,
                            title=None, font_path=None, font_color="white",
                            bgm=None, bgm_volume=0.3, bgm_fade=1.5,
-                           bgm_loop=True, total_duration=None, fill=False,
-                           zoom=1.1,
+                           bgm_start=0.0, bgm_loop=True,
+                           total_duration=None, fill=False, zoom=1.1,
                            watermark=None, watermark_position="bottom_right",
                            watermark_color="white", watermark_opacity=0.7,
                            intro=None, outro=None):
@@ -286,16 +286,18 @@ def concat_with_transition(segment_files, output_path, tmp_dir, transition,
         )
 
     if transition > 0 and len(segment_files) > 1:
-        _concat_xfade(segment_files, output_path, tmp_dir, transition,
-                      title_png, bgm, bgm_volume, bgm_fade, total_duration,
-                      watermark_png=watermark_png,
-                      intro=intro, outro=outro)
+        concat_xfade(segment_files, output_path, tmp_dir, transition,
+                     title_png=title_png, bgm=bgm, bgm_volume=bgm_volume,
+                     bgm_fade=bgm_fade, total_duration=total_duration,
+                     watermark_png=watermark_png, bgm_loop=bgm_loop,
+                     bgm_start=bgm_start, intro=intro, outro=outro)
     else:
         ok, stderr = concat_segments(
             segment_files, output_path, tmp_dir,
             title_png=title_png,
             bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
-            bgm_loop=bgm_loop, total_duration=total_duration,
+            bgm_start=bgm_start, bgm_loop=bgm_loop,
+            total_duration=total_duration,
             intro=intro, outro=outro,
             watermark_png=watermark_png,
         )
@@ -306,152 +308,6 @@ def concat_with_transition(segment_files, output_path, tmp_dir, transition,
             sys.exit(1)
 
 
-def _concat_xfade(segment_files, output_path, tmp_dir, transition,
-                  title_png, bgm, bgm_volume, bgm_fade, total_duration,
-                  watermark_png=None, intro=None, outro=None):
-    """xfade 필터로 세그먼트 간 크로스페이드 전환 효과를 적용한다."""
-    # 인트로/아웃트로를 세그먼트 목록에 포함
-    all_segments = []
-    if intro is not None:
-        all_segments.append(intro)
-    all_segments.extend(segment_files)
-    if outro is not None:
-        all_segments.append(outro)
-
-    n = len(all_segments)
-
-    # 각 세그먼트 입력
-    cmd = ["ffmpeg", "-y"]
-    for seg in all_segments:
-        cmd += ["-i", str(seg)]
-
-    input_idx = n
-    extra_inputs = []
-
-    if title_png:
-        extra_inputs.append(("-loop", "1", "-i", title_png))
-        title_idx = input_idx
-        input_idx += 1
-    else:
-        title_idx = None
-
-    if watermark_png:
-        extra_inputs.append(("-loop", "1", "-i", watermark_png))
-        watermark_idx = input_idx
-        input_idx += 1
-    else:
-        watermark_idx = None
-
-    if bgm:
-        if bgm_loop:
-            extra_inputs.append(("-stream_loop", "-1", "-i", str(bgm)))
-        else:
-            extra_inputs.append(("-i", str(bgm)))
-        bgm_idx = input_idx
-        input_idx += 1
-    else:
-        bgm_idx = None
-
-    for args_tuple in extra_inputs:
-        cmd += list(args_tuple)
-
-    # filter_complex 구성
-    fc_parts = []
-
-    # xfade 체인: [0][1]xfade...[v01]; [v01][2]xfade...[v012]; ...
-    # 각 세그먼트의 길이를 기반으로 offset 계산
-    # 모든 세그먼트가 동일한 duration이라고 가정 (total_duration / n)
-    seg_dur = (total_duration / n) if total_duration else 3.0
-    offset = seg_dur - transition  # 첫 번째 전환 시작 시간
-
-    if n == 2:
-        fc_parts.append(
-            f"[0:v][1:v]xfade=transition=fade:duration={transition}:offset={offset:.3f}[vx]"
-        )
-        vx_label = "[vx]"
-        # 오디오 concat
-        fc_parts.append(
-            f"[0:a][1:a]acrossfade=d={transition}[ax]"
-        )
-        ax_label = "[ax]"
-    else:
-        # 비디오 xfade 체인
-        prev_v = "[0:v]"
-        for i in range(1, n):
-            cur_off = seg_dur * i - transition * i
-            if cur_off < 0:
-                cur_off = 0
-            out_label = f"[vx{i}]" if i < n - 1 else "[vx]"
-            fc_parts.append(
-                f"{prev_v}[{i}:v]xfade=transition=fade:duration={transition}:offset={cur_off:.3f}{out_label}"
-            )
-            prev_v = out_label
-        vx_label = "[vx]"
-
-        # 오디오 acrossfade 체인
-        prev_a = "[0:a]"
-        for i in range(1, n):
-            out_label = f"[ax{i}]" if i < n - 1 else "[ax]"
-            fc_parts.append(
-                f"{prev_a}[{i}:a]acrossfade=d={transition}{out_label}"
-            )
-            prev_a = out_label
-        ax_label = "[ax]"
-
-    # 제목 오버레이 (페이드인)
-    if title_idx is not None:
-        fc_parts.append(
-            f"[{title_idx}:v]format=rgba,fade=t=in:st=0:d=1:alpha=1[title];"
-            f"{vx_label}[title]overlay=0:0:shortest=1[vafter_title]"
-        )
-        vafter_title_label = "[vafter_title]"
-    else:
-        vafter_title_label = vx_label
-
-    # 워터마크 오버레이 (페이드 없이 고정)
-    if watermark_idx is not None:
-        fc_parts.append(
-            f"[{watermark_idx}:v]format=rgba[wm];"
-            f"{vafter_title_label}[wm]overlay=0:0:shortest=1[vfinal]"
-        )
-        vfinal_label = "[vfinal]"
-    else:
-        vfinal_label = vafter_title_label
-
-    # BGM 믹싱
-    if bgm_idx is not None:
-        fade_out_start = max(0, (total_duration or 30) - bgm_fade)
-        fc_parts.append(
-            f"[{bgm_idx}:a]volume={bgm_volume},"
-            f"afade=t=in:st=0:d={bgm_fade},"
-            f"afade=t=out:st={fade_out_start}:d={bgm_fade}[bgm];"
-            f"{ax_label}[bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]"
-        )
-        afinal_label = "[aout]"
-    else:
-        afinal_label = ax_label
-
-    cmd += ["-filter_complex", ";".join(fc_parts)]
-    cmd += ["-map", vfinal_label, "-map", afinal_label]
-    cmd += ENCODER_VIDEO + ENCODER_AUDIO + ["-movflags", "+faststart", str(output_path)]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if result.returncode != 0:
-        print("  합치기 실패 (xfade). concat demuxer로 재시도합니다...")
-        # xfade 실패 시 demuxer로 폴백
-        ok, stderr = concat_segments(
-            segment_files, output_path, tmp_dir,
-            title_png=title_png,
-            bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
-            bgm_loop=bgm_loop, total_duration=total_duration,
-            intro=intro, outro=outro,
-            watermark_png=watermark_png,
-        )
-        if not ok:
-            print("  합치기 실패 (demuxer):")
-            for line in stderr.strip().splitlines()[-5:]:
-                print(f"    {line}")
-            sys.exit(1)
 
 
 def build_parser():
@@ -540,7 +396,7 @@ def build_parser():
 
 def run(args):
     """실제 작업 수행 (서브커맨드에서도 호출됨)"""
-    output_path = Path(args.out)
+    output_path = unique_path(Path(args.out))
     font_path = resolve_font_path(args)
 
     print("=== 이미지 숏폼 영상 생성기 ===")
@@ -571,8 +427,7 @@ def run(args):
     print()
 
     # 이미지 검색
-    src_explicitly_set = args.src != "/Volumes/SD_Card/DCIM"
-    date_str = None if src_explicitly_set else getattr(args, "date", None)
+    date_str = getattr(args, "date", None)
     images = find_media_files(Path(args.src), args.ext, date_str=date_str, recursive=False)
     if not images:
         ext_list = ", ".join(f"*.{e}" for e in args.ext)
@@ -619,7 +474,7 @@ def run(args):
             if subtitles and i < len(subtitles) and subtitles[i].strip():
                 sub_png = create_subtitle_overlay(
                     subtitles[i].strip(), font_path,
-                    zoom=args.zoom, fill=args.fill,
+                    zoom=args.zoom, fill=(args.bg == "fill"),
                     color=args.subtitle_color,
                     tmp_dir=tmp_dir, index=i,
                 )
@@ -627,7 +482,7 @@ def run(args):
             ok, err = process_image_segment(
                 img_path, effect, args.duration, args.zoom_range,
                 seg_path, subtitle_png=sub_png,
-                fill=args.fill, zoom=args.zoom,
+                fill=(args.bg == "fill"), zoom=args.zoom,
                 speed=args.speed, tmp_dir=tmp_dir,
             )
 
@@ -660,8 +515,8 @@ def run(args):
                 transition=0,
                 title=args.title, font_path=font_path, font_color=args.font_color,
                 bgm=args.bgm, bgm_volume=args.bgm_volume, bgm_fade=args.bgm_fade,
-                bgm_loop=args.bgm_loop,
-                total_duration=total_duration, fill=args.fill, zoom=args.zoom,
+                bgm_start=args.bgm_start, bgm_loop=args.bgm_loop,
+                total_duration=total_duration, fill=(args.bg == "fill"), zoom=args.zoom,
                 watermark=args.watermark,
                 watermark_position=args.watermark_position,
                 watermark_color=args.watermark_color,
@@ -675,8 +530,8 @@ def run(args):
                 transition=args.transition,
                 title=args.title, font_path=font_path, font_color=args.font_color,
                 bgm=args.bgm, bgm_volume=args.bgm_volume, bgm_fade=args.bgm_fade,
-                bgm_loop=args.bgm_loop,
-                total_duration=total_duration, fill=args.fill, zoom=args.zoom,
+                bgm_start=args.bgm_start, bgm_loop=args.bgm_loop,
+                total_duration=total_duration, fill=(args.bg == "fill"), zoom=args.zoom,
                 watermark=args.watermark,
                 watermark_position=args.watermark_position,
                 watermark_color=args.watermark_color,
@@ -707,4 +562,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n  작업이 중지되었습니다.\n")
+        sys.exit(130)

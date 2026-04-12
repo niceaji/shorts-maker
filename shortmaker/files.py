@@ -29,3 +29,18 @@ def find_media_files(
             continue
         clips.append(p)
     return sorted(clips)
+
+
+def unique_path(path: Path) -> Path:
+    """파일이 이미 존재하면 _1, _2, ... 접미사를 붙여 고유한 경로를 반환한다."""
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    parent = path.parent
+    n = 1
+    while True:
+        candidate = parent / f"{stem}_{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+        n += 1

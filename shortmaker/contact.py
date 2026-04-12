@@ -136,8 +136,7 @@ def build_contact_sheet(args: argparse.Namespace) -> None:
 
     # 파일 검색
     print(f"파일 검색 중: {src}")
-    src_explicitly_set = str(src) != "/Volumes/SD_Card/DCIM"
-    date_str = None if src_explicitly_set else getattr(args, "date", None)
+    date_str = getattr(args, "date", None)
     files = find_media_files(src, exts=args.ext, date_str=date_str, recursive=False)
     if not files:
         print(f"오류: 지원 확장자({', '.join(args.ext)})에 해당하는 파일이 없습니다.", file=sys.stderr)
@@ -293,4 +292,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n  작업이 중지되었습니다.\n")
+        sys.exit(130)

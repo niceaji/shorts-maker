@@ -21,11 +21,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+from shortmaker.files import unique_path
 from shortmaker.probe import get_video_info
 from shortmaker.ffmpeg import (
     ENCODER_ARGS, ENCODER_VIDEO, ENCODER_AUDIO,
     ENHANCE_FILTER, build_speed_filter,
-    concat_segments,
+    concat_segments, concat_xfade,
 )
 from shortmaker.cli import (
     add_bgm_args,
@@ -37,15 +38,16 @@ from shortmaker.overlay import create_title_overlay
 from shortmaker.score import score_segments, pick_top_segments
 
 
-def _build_ratio_filter(ratio, src_w, src_h, enhance, fill=False, zoom=1.1):
+def _build_ratio_filter(ratio, src_w, src_h, enhance, bg="fill", zoom=1.0):
     """비율에 따른 비디오 필터를 생성한다.
 
-    fill=False: 블러 배경 위에 원본 영상 중앙 배치 (9:16, 16:9, 1:1)
-    fill=True: 전체 화면 꽉 채우기 (크롭만)
-    original: 항상 원본 비율 유지 (fill 무관)
+    bg="fill": 전체 화면 꽉 채우기 (크롭)
+    bg="blur": 블러 배경 위에 원본 영상 중앙 배치
+    bg="letterbox": 검정 배경 위에 원본 영상 중앙 배치
+    original: 항상 원본 비율 유지
 
     반환값: (filter_complex_string, target_w, target_h, is_complex)
-    is_complex=True면 filter_complex에 여러 스트림이 포함됨 (블러 배경)
+    is_complex=True면 filter_complex에 여러 스트림이 포함됨
     """
     enhance_chain = f",{ENHANCE_FILTER}" if enhance else ""
 
@@ -63,16 +65,23 @@ def _build_ratio_filter(ratio, src_w, src_h, enhance, fill=False, zoom=1.1):
     }
     crop_expr, out_w, out_h = ratio_map[ratio]
 
-    if fill:
-        # 꽉 채우기: 크롭 → 스케일
+    if bg == "fill":
         filt = f"{crop_expr},scale={out_w}:{out_h}{enhance_chain}"
         return filt, out_w, out_h, False
 
-    # 블러 배경 + 전경 중앙 배치
+    if bg == "letterbox":
+        filt = (
+            f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+            f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black"
+            f"{enhance_chain}"
+        )
+        return filt, out_w, out_h, False
+
+    # blur: 블러 배경 + 전경 중앙 배치
     fg_w = f"trunc({zoom}*{out_w}/2)*2"
     fg_h = f"trunc({zoom}*{out_w}/iw*ih/2)*2"
 
-    bg = (
+    bg_filter = (
         f"[0:v]{crop_expr},"
         f"scale={out_w}:{out_h},gblur=sigma=40"
         f"{enhance_chain}[bg]"
@@ -82,7 +91,7 @@ def _build_ratio_filter(ratio, src_w, src_h, enhance, fill=False, zoom=1.1):
         f"{enhance_chain}[fg]"
     )
     overlay = "[bg][fg]overlay=(W-w)/2:(H-h)/2[v]"
-    filt = f"{bg};{fg};{overlay}"
+    filt = f"{bg_filter};{fg};{overlay}"
     return filt, out_w, out_h, True
 
 
@@ -148,7 +157,7 @@ def run(args):
         print(f"오류: 입력 파일을 찾을 수 없습니다: {input_path}")
         sys.exit(1)
 
-    output_path = Path(args.out).expanduser()
+    output_path = unique_path(Path(args.out).expanduser())
 
     # 영상 정보 조회
     info = get_video_info(input_path)
@@ -174,10 +183,10 @@ def run(args):
     count = min(count, max_possible)
 
     # 비율 필터 생성
-    fill = getattr(args, "fill", False)
-    zoom = getattr(args, "zoom", 1.1)
+    bg = getattr(args, "bg", "fill")
+    zoom = getattr(args, "zoom", 1.0)
     vf_base, target_w, target_h, is_complex = _build_ratio_filter(
-        args.ratio, src_w, src_h, args.enhance, fill=fill, zoom=zoom)
+        args.ratio, src_w, src_h, args.enhance, bg=bg, zoom=zoom)
     # is_complex=True면 이미 [v] 출력을 포함, 아니면 감싸줌
     vf = vf_base if is_complex else f"[0:v]{vf_base}[v]"
 
@@ -279,21 +288,22 @@ def run(args):
 
             # 전환 효과 유무에 따라 합치기
             if args.transition > 0:
-                _concat_xfade(
+                concat_xfade(
                     segment_files, output_path, tmp_dir,
                     transition=args.transition,
                     title_png=title_png,
                     bgm=args.bgm, bgm_volume=args.bgm_volume,
                     bgm_fade=args.bgm_fade, bgm_loop=args.bgm_loop,
                     total_duration=total_duration,
+                    bgm_start=args.bgm_start,
                 )
             else:
                 ok, err = concat_segments(
                     segment_files, output_path, tmp_dir,
                     title_png=title_png,
                     bgm=args.bgm, bgm_volume=args.bgm_volume,
-                    bgm_fade=args.bgm_fade, bgm_loop=args.bgm_loop,
-                    total_duration=total_duration,
+                    bgm_fade=args.bgm_fade, bgm_start=args.bgm_start,
+                    bgm_loop=args.bgm_loop, total_duration=total_duration,
                 )
                 if not ok:
                     print("합치기 실패:")
@@ -307,116 +317,6 @@ def run(args):
     else:
         print("출력 파일을 찾을 수 없습니다.")
         sys.exit(1)
-
-
-def _concat_xfade(segment_files, output_path, tmp_dir, *, transition,
-                  title_png, bgm, bgm_volume, bgm_fade, total_duration,
-                  bgm_loop=True):
-    """xfade 필터로 세그먼트 간 크로스페이드 전환 효과를 적용한다."""
-    n = len(segment_files)
-
-    cmd = ["ffmpeg", "-y"]
-    for seg in segment_files:
-        cmd += ["-i", str(seg)]
-
-    input_idx = n
-    extra_inputs = []
-
-    if title_png:
-        extra_inputs.append(("-loop", "1", "-i", title_png))
-        title_idx = input_idx
-        input_idx += 1
-    else:
-        title_idx = None
-
-    if bgm:
-        if bgm_loop:
-            extra_inputs.append(("-stream_loop", "-1", "-i", str(bgm)))
-        else:
-            extra_inputs.append(("-i", str(bgm)))
-        bgm_idx = input_idx
-        input_idx += 1
-    else:
-        bgm_idx = None
-
-    for args_tuple in extra_inputs:
-        cmd += list(args_tuple)
-
-    # filter_complex 구성
-    fc_parts = []
-    seg_dur = (total_duration / n) if total_duration else 3.0
-    offset = seg_dur - transition
-
-    if n == 2:
-        fc_parts.append(
-            f"[0:v][1:v]xfade=transition=fade:duration={transition}:offset={offset:.3f}[vx]"
-        )
-        vx_label = "[vx]"
-        fc_parts.append(f"[0:a][1:a]acrossfade=d={transition}[ax]")
-        ax_label = "[ax]"
-    else:
-        prev_v = "[0:v]"
-        for i in range(1, n):
-            cur_off = seg_dur * i - transition * i
-            if cur_off < 0:
-                cur_off = 0
-            out_label = f"[vx{i}]" if i < n - 1 else "[vx]"
-            fc_parts.append(
-                f"{prev_v}[{i}:v]xfade=transition=fade:duration={transition}:offset={cur_off:.3f}{out_label}"
-            )
-            prev_v = out_label
-        vx_label = "[vx]"
-
-        prev_a = "[0:a]"
-        for i in range(1, n):
-            out_label = f"[ax{i}]" if i < n - 1 else "[ax]"
-            fc_parts.append(
-                f"{prev_a}[{i}:a]acrossfade=d={transition}{out_label}"
-            )
-            prev_a = out_label
-        ax_label = "[ax]"
-
-    # 제목 오버레이 (페이드인)
-    if title_idx is not None:
-        fc_parts.append(
-            f"[{title_idx}:v]format=rgba,fade=t=in:st=0:d=1:alpha=1[title];"
-            f"{vx_label}[title]overlay=0:0:shortest=1[vafter_title]"
-        )
-        vx_label = "[vafter_title]"
-
-    vfinal_label = vx_label
-
-    # BGM 믹싱
-    if bgm_idx is not None:
-        fade_out_start = max(0, (total_duration or 30) - bgm_fade)
-        fc_parts.append(
-            f"[{bgm_idx}:a]volume={bgm_volume},"
-            f"afade=t=in:st=0:d={bgm_fade},"
-            f"afade=t=out:st={fade_out_start}:d={bgm_fade}[bgm];"
-            f"{ax_label}[bgm]amix=inputs=2:duration=first:dropout_transition=0[aout]"
-        )
-        afinal_label = "[aout]"
-    else:
-        afinal_label = ax_label
-
-    cmd += ["-filter_complex", ";".join(fc_parts)]
-    cmd += ["-map", vfinal_label, "-map", afinal_label]
-    cmd += ENCODER_VIDEO + ENCODER_AUDIO + ["-movflags", "+faststart", str(output_path)]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if result.returncode != 0:
-        print("  합치기 실패 (xfade). concat demuxer로 재시도합니다...")
-        ok, stderr = concat_segments(
-            segment_files, output_path, tmp_dir,
-            title_png=title_png,
-            bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
-            bgm_loop=bgm_loop, total_duration=total_duration,
-        )
-        if not ok:
-            print("  합치기 실패 (demuxer):")
-            for line in stderr.strip().splitlines()[-5:]:
-                print(f"    {line}")
-            sys.exit(1)
 
 
 def build_parser():
@@ -440,7 +340,7 @@ def build_parser():
     src_group = parser.add_argument_group("소스 옵션")
     src_group.add_argument(
         "--input", "-i",
-        required=True,
+        default=None,
         help="소스 영상 파일 경로 (필수)",
     )
 
@@ -523,4 +423,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n  작업이 중지되었습니다.\n")
+        sys.exit(130)
