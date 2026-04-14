@@ -260,6 +260,13 @@ def _build_frames_parser(subparsers):
         "--level", action="store_true", default=False,
         help="수평 자동 보정 (실험적, 기본: 꺼짐)",
     )
+    p.add_argument(
+        "--every",
+        type=float,
+        default=None,
+        metavar="N",
+        help="N초 간격으로 프레임 추출 (기본: 랜덤 1프레임)",
+    )
 
     return p
 

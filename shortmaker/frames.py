@@ -162,6 +162,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--level", action="store_true", default=False,
         help="수평 자동 보정 (실험적, 기본: 꺼짐)",
     )
+    parser.add_argument(
+        "--every",
+        type=float,
+        default=None,
+        metavar="N",
+        help="N초 간격으로 프레임 추출 (기본: 랜덤 1프레임)",
+    )
     return parser
 
 
@@ -204,20 +211,39 @@ def run(args) -> None:
             continue
 
         duration = info["duration"]
-        timestamp = random.uniform(0, duration)
-        print(f"  길이: {duration:.2f}초  |  선택 지점: {timestamp:.3f}초")
 
-        out_path = out / (filepath.stem + ".jpg")
-        success = extract_frame(filepath, timestamp, out_path, enhance=args.enhance)
-        if success:
-            if args.level:
-                angle = level_horizon(out_path)
-                if angle is not None:
-                    print(f"  수평 보정: {angle:+.1f}°")
-            print(f"  저장: {out_path}")
-            extracted += 1
+        if args.every is not None:
+            # N초 간격 모드: 0초부터 끝까지 순번 프레임 추출
+            interval = args.every
+            timestamps = [t for t in (interval * n for n in range(int(duration / interval) + 1)) if t < duration]
+            print(f"  길이: {duration:.2f}초  |  간격: {interval}초  |  {len(timestamps)}장 예정")
+            clip_extracted = 0
+            for idx, timestamp in enumerate(timestamps, start=1):
+                out_path = out / f"{filepath.stem}_{idx:03d}.jpg"
+                success = extract_frame(filepath, timestamp, out_path, enhance=args.enhance)
+                if success:
+                    if args.level:
+                        angle = level_horizon(out_path)
+                        if angle is not None:
+                            print(f"    [{idx:03d}] 수평 보정: {angle:+.1f}°")
+                    clip_extracted += 1
+            print(f"  저장: {clip_extracted}장 → {out}/")
+            extracted += clip_extracted
         else:
-            skipped += 1
+            # 기본 모드: 랜덤 타임스탬프 1프레임
+            timestamp = random.uniform(0, duration)
+            print(f"  길이: {duration:.2f}초  |  선택 지점: {timestamp:.3f}초")
+            out_path = out / (filepath.stem + ".jpg")
+            success = extract_frame(filepath, timestamp, out_path, enhance=args.enhance)
+            if success:
+                if args.level:
+                    angle = level_horizon(out_path)
+                    if angle is not None:
+                        print(f"  수평 보정: {angle:+.1f}°")
+                print(f"  저장: {out_path}")
+                extracted += 1
+            else:
+                skipped += 1
 
     print(f"\n완료. 전체: {total}  |  추출: {extracted}  |  건너뜀: {skipped}")
 
