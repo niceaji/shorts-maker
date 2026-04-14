@@ -123,8 +123,11 @@ def build_filter(zoom, enhance, bg="fill", smart_crop=False, clip_path=None,
         return filt
 
     if bg == "letterbox":
+        # zoom 배율 적용: 확대 후 넘치는 부분 크롭, 부족하면 검정 패딩
         filt = (
-            f"[0:v]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+            f"[0:v]scale=trunc({zoom}*{out_w}/2)*2:trunc({zoom}*{out_h}/2)*2"
+            f":force_original_aspect_ratio=decrease,"
+            f"crop=min(iw\\,{out_w}):min(ih\\,{out_h}):(iw-min(iw\\,{out_w}))/2:(ih-min(ih\\,{out_h}))/2,"
             f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2:black"
             f"{enhance_chain}[v]"
         )
