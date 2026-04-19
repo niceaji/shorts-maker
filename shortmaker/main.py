@@ -375,16 +375,16 @@ def _build_highlight_parser(subparsers):
         fromfile_prefix_chars="@",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""예시:
-  shorts highlight -i video.mp4                    # 기본 (1초씩, 원본 비율)
-  shorts highlight -i video.mp4 -t 2.0 -n 10      # 2초씩 10개
-  shorts highlight -i video.mp4 --ratio 9:16       # 쇼츠 비율
-  shorts highlight -i video.mp4 --bgm music.mp3    # BGM 추가
-  shorts highlight -i video.mp4 --shuffle          # 랜덤 순서""",
+  shorts highlight -s video.mp4                    # 기본 (1초씩, 원본 비율)
+  shorts highlight -s video.mp4 -t 2.0 -n 10      # 2초씩 10개
+  shorts highlight -s video.mp4 --ratio 9:16       # 쇼츠 비율
+  shorts highlight -s video.mp4 --bgm music.mp3    # BGM 추가
+  shorts highlight -s video.mp4 --shuffle          # 랜덤 순서""",
     )
 
     # 소스/출력
     src = p.add_argument_group("소스/출력")
-    src.add_argument("--input", "-i", default=None,
+    src.add_argument("--src", "-s", default=None,
                      help="소스 영상 파일 경로 (필수)")
     src.add_argument("--out", "-o", default="./highlight.mp4",
                      help="출력 파일 경로 (기본: ./highlight.mp4)")
@@ -450,6 +450,7 @@ def _run():
   frames   영상에서 랜덤 프레임 추출
   contact  컨택트 시트(썸네일 그리드) 생성
   sharp    흐린 이미지 필터링 (선명한 것만 남기기)
+  highlight 단일 영상에서 하이라이트 릴 생성
 
 예시:
   shorts clip                    # 영상 숏폼 (기본)
@@ -457,7 +458,7 @@ def _run():
   shorts frames -d 20260318      # 프레임 추출
   shorts contact -s ./img        # 컨택시트
   shorts sharp -s ./img          # 선명도 필터
-  shorts highlight -i video.mp4  # 하이라이트 릴
+  shorts highlight -s video.mp4  # 하이라이트 릴
   shorts clip @preset.txt        # 프리셋 파일""",
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -475,7 +476,7 @@ def _run():
     args = parser.parse_args()
 
     # 경로 인자 틸드(~) 확장
-    for attr in ("src", "out", "bgm", "intro", "outro", "watermark", "font", "input"):
+    for attr in ("src", "out", "bgm", "intro", "outro", "watermark", "font"):
         val = getattr(args, attr, None)
         if val:
             setattr(args, attr, str(Path(val).expanduser()))
@@ -485,14 +486,17 @@ def _run():
         return
 
     # 소스 미지정 시 해당 서브커맨드 help 출력
-    src_attr = "input" if args.command == "highlight" else "src"
-    if getattr(args, src_attr, None) is None:
+    if getattr(args, "src", None) is None:
         sub[args.command].print_help()
         return
 
     # 입력 파일/디렉토리 존재 여부 조기 검증
-    _FILE_ARGS = ("bgm", "intro", "outro", "font", "input")
-    _DIR_ARGS = ("src",)
+    # highlight는 src가 파일, 그 외 서브커맨드는 src가 디렉토리
+    _FILE_ARGS = ["bgm", "intro", "outro", "font"]
+    _DIR_ARGS = ["src"]
+    if args.command == "highlight":
+        _FILE_ARGS.append("src")
+        _DIR_ARGS.remove("src")
     errors = []
     for attr in _FILE_ARGS:
         val = getattr(args, attr, None)

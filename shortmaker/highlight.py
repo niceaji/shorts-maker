@@ -7,10 +7,10 @@ make_highlight.py - 단일 영상에서 균등 간격 하이라이트 클립 추
 하이라이트 릴을 생성합니다.
 
 사용법:
-    python3 make_highlight.py -i input.mp4
-    python3 make_highlight.py -i input.mp4 -t 2.0 -n 10
-    python3 make_highlight.py -i input.mp4 --ratio 9:16 --bgm music.mp3
-    python3 make_highlight.py -i input.mp4 --shuffle --transition 0.5
+    python3 make_highlight.py -s input.mp4
+    python3 make_highlight.py -s input.mp4 -t 2.0 -n 10
+    python3 make_highlight.py -s input.mp4 --ratio 9:16 --bgm music.mp3
+    python3 make_highlight.py -s input.mp4 --shuffle --transition 0.5
 """
 
 import argparse
@@ -152,7 +152,7 @@ def _calc_start_times(video_duration, seg_duration, count):
 
 def run(args):
     """실제 작업 수행 (서브커맨드에서도 호출됨)"""
-    input_path = Path(args.input).expanduser()
+    input_path = Path(args.src).expanduser()
     if not input_path.exists():
         print(f"오류: 입력 파일을 찾을 수 없습니다: {input_path}")
         sys.exit(1)
@@ -322,12 +322,12 @@ def run(args):
 def build_parser():
     """CLI 인자 파서를 생성하여 반환한다."""
     epilog = """예시:
-  %(prog)s -i input.mp4                        # 기본 (자동 세그먼트 수)
-  %(prog)s -i input.mp4 -t 2.0 -n 10          # 2초씩 10개
-  %(prog)s -i input.mp4 --ratio 9:16           # 세로형 변환
-  %(prog)s -i input.mp4 --shuffle              # 순서 랜덤
-  %(prog)s -i input.mp4 --bgm music.mp3 --mute
-  %(prog)s -i input.mp4 --transition 0.5 --title "하이라이트"
+  %(prog)s -s input.mp4                        # 기본 (자동 세그먼트 수)
+  %(prog)s -s input.mp4 -t 2.0 -n 10          # 2초씩 10개
+  %(prog)s -s input.mp4 --ratio 9:16           # 세로형 변환
+  %(prog)s -s input.mp4 --shuffle              # 순서 랜덤
+  %(prog)s -s input.mp4 --bgm music.mp3 --mute
+  %(prog)s -s input.mp4 --transition 0.5 --title "하이라이트"
 """
     parser = argparse.ArgumentParser(
         description="단일 영상에서 균등 간격 하이라이트 클립을 추출하여 합칩니다.",
@@ -339,7 +339,7 @@ def build_parser():
     # 소스 옵션
     src_group = parser.add_argument_group("소스 옵션")
     src_group.add_argument(
-        "--input", "-i",
+        "--src", "-s",
         default=None,
         help="소스 영상 파일 경로 (필수)",
     )
