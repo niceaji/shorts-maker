@@ -26,7 +26,7 @@ def add_subtitle_args(parser):
 def add_bgm_args(parser):
     """배경음악 관련 인자 추가: --bgm, --bgm-volume, --bgm-fade"""
     parser.add_argument("--bgm", default=None,
-                        help="배경음악 파일 경로 (mp3, wav 등)")
+                        help="배경음악 파일 경로 또는 YouTube URL (URL이면 50초만 잘라 사용)")
     parser.add_argument("--bgm-volume", type=float, default=0.3,
                         help="배경음악 볼륨 (0.0~1.0, 기본: 0.3)")
     parser.add_argument("--bgm-fade", type=float, default=1.5,

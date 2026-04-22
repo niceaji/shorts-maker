@@ -20,6 +20,7 @@ from shortmaker.cli import (
     add_title_args,
     add_watermark_args,
 )
+from shortmaker.ytbgm import download_youtube_bgm, is_youtube_url
 
 
 def _build_clip_parser(subparsers):
@@ -475,11 +476,19 @@ def _run():
     argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
-    # 경로 인자 틸드(~) 확장
+    # 경로 인자 틸드(~) 확장 (bgm이 YouTube URL이면 건너뜀)
     for attr in ("src", "out", "bgm", "intro", "outro", "watermark", "font"):
         val = getattr(args, attr, None)
-        if val:
+        if val and not (attr == "bgm" and is_youtube_url(val)):
             setattr(args, attr, str(Path(val).expanduser()))
+
+    # --bgm에 YouTube URL이 들어오면 50초만 잘라 로컬 파일로 교체
+    bgm_val = getattr(args, "bgm", None)
+    if bgm_val and is_youtube_url(bgm_val):
+        start = getattr(args, "bgm_start", 0.0) or 0.0
+        local = download_youtube_bgm(bgm_val, duration=50.0, start=start)
+        args.bgm = str(local)
+        args.bgm_start = 0.0
 
     if args.command is None:
         parser.print_help()
