@@ -295,7 +295,7 @@ def run(args):
                     bgm=args.bgm, bgm_volume=args.bgm_volume,
                     bgm_fade=args.bgm_fade, bgm_loop=args.bgm_loop,
                     total_duration=total_duration,
-                    bgm_start=args.bgm_start,
+                    bgm_start=args.bgm_start, bgm_max=args.bgm_max,
                 )
             else:
                 ok, err = concat_segments(
@@ -303,6 +303,7 @@ def run(args):
                     title_png=title_png,
                     bgm=args.bgm, bgm_volume=args.bgm_volume,
                     bgm_fade=args.bgm_fade, bgm_start=args.bgm_start,
+                    bgm_max=args.bgm_max,
                     bgm_loop=args.bgm_loop, total_duration=total_duration,
                 )
                 if not ok:

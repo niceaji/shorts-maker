@@ -24,15 +24,23 @@ def build_enhance_chain(enhance: bool) -> str:
 
 
 def build_bgm_filter(bgm_idx: int, volume: float, fade: float, total_duration: float,
-                     bgm_start: float = 0.0, audio_label: str = "[0:a]") -> str:
+                     bgm_start: float = 0.0, audio_label: str = "[0:a]",
+                     bgm_max: float = None) -> str:
     """BGM 오디오 필터 체인 문자열을 반환한다.
 
     볼륨 조절 + 페이드인 + 페이드아웃 + 원본 오디오와 믹싱
     bgm_start > 0이면 atrim으로 시작 지점을 건너뛴다.
+    bgm_max가 지정되면 BGM을 최대 해당 길이까지만 재생한다 (저작권 대비).
     audio_label: 원본 오디오 스트림 레이블 (xfade 시 "[ax]" 등)
     """
-    fade_out_start = max(0, total_duration - fade)
-    trim_part = f"atrim=start={bgm_start},asetpts=PTS-STARTPTS," if bgm_start > 0 else ""
+    effective = min(total_duration, bgm_max) if bgm_max else total_duration
+    fade_out_start = max(0, effective - fade)
+    trim_args = []
+    if bgm_start > 0:
+        trim_args.append(f"start={bgm_start}")
+    if bgm_max:
+        trim_args.append(f"end={bgm_start + bgm_max}")
+    trim_part = f"atrim={':'.join(trim_args)},asetpts=PTS-STARTPTS," if trim_args else ""
     return (
         f"[{bgm_idx}:a]{trim_part}volume={volume},"
         f"afade=t=in:st=0:d={fade},"
@@ -165,7 +173,7 @@ def _convert_intro_outro(file_path, label, width, height, tmp_dir):
 
 def concat_segments(segment_files, output_path, tmp_dir, *,
                     title_png=None, bgm=None, bgm_volume=0.3, bgm_fade=1.5,
-                    bgm_start=0.0, bgm_loop=True, total_duration=None,
+                    bgm_start=0.0, bgm_max=None, bgm_loop=True, total_duration=None,
                     intro=None, outro=None, watermark_png=None):
     """concat demuxer로 세그먼트를 합친다.
 
@@ -237,7 +245,8 @@ def concat_segments(segment_files, output_path, tmp_dir, *,
         if bgm_loop:
             cmd += ["-stream_loop", "-1"]
         cmd += ["-i", str(bgm)]
-        af_parts.append(build_bgm_filter(input_idx, bgm_volume, bgm_fade, adjusted_duration or 30, bgm_start))
+        af_parts.append(build_bgm_filter(input_idx, bgm_volume, bgm_fade, adjusted_duration or 30,
+                                         bgm_start, bgm_max=bgm_max))
         input_idx += 1
 
     # filter_complex 조합
@@ -264,7 +273,7 @@ def concat_segments(segment_files, output_path, tmp_dir, *,
 def concat_xfade(segment_files, output_path, tmp_dir, transition,
                  title_png=None, bgm=None, bgm_volume=0.3, bgm_fade=1.5,
                  total_duration=None, watermark_png=None, bgm_loop=True,
-                 bgm_start=0.0, intro=None, outro=None):
+                 bgm_start=0.0, bgm_max=None, intro=None, outro=None):
     """xfade 필터로 세그먼트 간 크로스페이드 전환 효과를 적용한다.
 
     실패 시 concat demuxer로 자동 폴백한다.
@@ -371,7 +380,7 @@ def concat_xfade(segment_files, output_path, tmp_dir, transition,
     if bgm_idx is not None:
         fc_parts.append(build_bgm_filter(
             bgm_idx, bgm_volume, bgm_fade, total_duration or 30,
-            bgm_start=bgm_start, audio_label=ax_label,
+            bgm_start=bgm_start, audio_label=ax_label, bgm_max=bgm_max,
         ))
         afinal_label = "[aout]"
     else:
@@ -388,7 +397,7 @@ def concat_xfade(segment_files, output_path, tmp_dir, transition,
             segment_files, output_path, tmp_dir,
             title_png=title_png,
             bgm=bgm, bgm_volume=bgm_volume, bgm_fade=bgm_fade,
-            bgm_start=bgm_start, bgm_loop=bgm_loop,
+            bgm_start=bgm_start, bgm_max=bgm_max, bgm_loop=bgm_loop,
             total_duration=total_duration,
             intro=intro, outro=outro,
             watermark_png=watermark_png,

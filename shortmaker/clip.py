@@ -483,6 +483,7 @@ def run(args):
                     bgm=args.bgm, bgm_volume=args.bgm_volume, bgm_fade=args.bgm_fade,
                     bgm_loop=args.bgm_loop, total_duration=sum_duration,
                     watermark_png=watermark_png, bgm_start=args.bgm_start,
+                    bgm_max=args.bgm_max,
                     intro=intro_seg, outro=outro_seg,
                 )
             else:
@@ -491,6 +492,7 @@ def run(args):
                     title_png=title_png,
                     bgm=args.bgm, bgm_volume=args.bgm_volume,
                     bgm_fade=args.bgm_fade, bgm_start=args.bgm_start,
+                    bgm_max=args.bgm_max,
                     bgm_loop=args.bgm_loop, total_duration=sum_duration,
                     intro=intro_seg,
                     outro=outro_seg,

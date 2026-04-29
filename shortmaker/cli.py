@@ -33,9 +33,11 @@ def add_bgm_args(parser):
                         help="배경음악 페이드인/아웃 길이 (초, 기본: 1.5)")
     parser.add_argument("--bgm-start", type=float, default=0.0,
                         help="BGM 시작 지점 (초, 기본: 0.0)")
-    parser.add_argument("--no-bgm-loop", dest="bgm_loop", action="store_false",
-                        default=True,
-                        help="BGM 반복 끄기 (기본: 영상 길이만큼 반복)")
+    parser.add_argument("--bgm-max", type=float, default=None,
+                        help="BGM 최대 재생 길이 (초, 저작권 음악 대비; 기본: 무제한)")
+    parser.add_argument("--bgm-loop", dest="bgm_loop", action="store_true",
+                        default=False,
+                        help="BGM을 영상 길이만큼 반복 재생 (기본: 끔)")
 
 
 def add_display_args(parser):
